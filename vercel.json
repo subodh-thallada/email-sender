@@ -1,8 +1,0 @@
-{
-  "crons": [
-    {
-      "path": "/api/cron/send-due",
-      "schedule": "*/15 * * * *"
-    }
-  ]
-}

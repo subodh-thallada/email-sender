@@ -1,0 +1,58 @@
+name: Flush scheduled outbox
+
+# Replaces Vercel Cron, whose hobby plan allows only one run per day.
+# GitHub-hosted runners are free without limit on public repositories.
+#
+# Two things this needs, set under Settings -> Secrets and variables -> Actions:
+#   APP_URL      the deployed origin, e.g. https://email-sender.vercel.app
+#   CRON_SECRET  the same value the deployment has, or the endpoint returns 401
+#
+# GitHub queues scheduled runs rather than firing them on the dot, so a run can
+# land a few minutes late — harmless here, since the outbox only ever releases
+# mail whose time has already passed.
+
+on:
+  schedule:
+    - cron: "*/15 * * * *"
+  workflow_dispatch:
+
+# A slow flush should not have a second run sending the same messages behind it.
+concurrency:
+  group: flush-outbox
+  cancel-in-progress: false
+
+jobs:
+  flush:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Send everything that is due
+        env:
+          APP_URL: ${{ secrets.APP_URL }}
+          CRON_SECRET: ${{ secrets.CRON_SECRET }}
+        run: |
+          set -euo pipefail
+
+          if [ -z "${APP_URL:-}" ] || [ -z "${CRON_SECRET:-}" ]; then
+            echo "::error::APP_URL and CRON_SECRET must both be set as repository secrets."
+            exit 1
+          fi
+
+          # The secret travels as a header, never as a query param, so it stays
+          # out of the runner logs and out of the deployment's access logs.
+          status=$(curl --silent --show-error --location \
+            --max-time 300 \
+            --retry 2 --retry-delay 10 --retry-connrefused \
+            --request POST "${APP_URL%/}/api/cron/send-due" \
+            --header "Authorization: Bearer ${CRON_SECRET}" \
+            --output response.json \
+            --write-out '%{http_code}')
+
+          echo "HTTP $status"
+          cat response.json || true
+          echo
+
+          if [ "$status" != "200" ]; then
+            echo "::error::Flush failed with HTTP $status"
+            exit 1
+          fi
