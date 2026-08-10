@@ -1,6 +1,6 @@
 import * as z from "zod";
 import { generateObject } from "./provider";
-import { modelFor } from "./models";
+import { resolveTask } from "../settings";
 import { cached, DAY } from "../cache";
 import type { ParsedQuery } from "../types";
 
@@ -43,7 +43,8 @@ Rules:
 - limit defaults to 20 unless the user asks for a specific number.`;
 
 export async function parseQuery(query: string): Promise<ParsedQuery> {
-  const key = `parse:${modelFor("parse")}:${query}`;
+  const { model } = await resolveTask("parse");
+  const key = `parse:${model}:${query}`;
   return cached<ParsedQuery>(key, 30 * DAY, async () => {
     const parsed = await generateObject(
       Schema,

@@ -17,7 +17,10 @@
   "dependencies": {
     "@anthropic-ai/sdk": "^0.116.0",
     "@libsql/client": "^0.17.4",
+    "@supabase/ssr": "^0.12.4",
+    "@supabase/supabase-js": "^2.109.0",
     "cheerio": "^1.2.0",
+    "marked": "^18.0.9",
     "next": "^16.3.0",
     "nodemailer": "^9.0.5",
     "openai": "^6.49.0",
@@ -25,6 +28,7 @@
     "postgres": "^3.4.9",
     "react": "^19.2.8",
     "react-dom": "^19.2.8",
+    "sanitize-html": "^2.17.5",
     "zod": "^4.4.3"
   },
   "devDependencies": {
@@ -33,6 +37,7 @@
     "@types/nodemailer": "^8.0.1",
     "@types/react": "^19.2.18",
     "@types/react-dom": "^19.2.4",
+    "@types/sanitize-html": "^2.16.1",
     "postcss": "^8.5.26",
     "tailwindcss": "^4.3.3",
     "tsx": "^4.23.11",

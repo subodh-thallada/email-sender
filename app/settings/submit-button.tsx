@@ -4,7 +4,7 @@ import { useEffect, useRef, useState } from "react";
 import { useFormStatus } from "react-dom";
 import { Spinner, Swap } from "../ui/bits";
 
-export default function SubmitButton() {
+export default function SubmitButton({ label = "Save profile" }: { label?: string }) {
   const { pending } = useFormStatus();
   const wasPending = useRef(false);
   const [saved, setSaved] = useState(false);
@@ -31,7 +31,7 @@ export default function SubmitButton() {
         {pending && <Spinner />}
         <Swap
           showing={pending ? "b" : saved ? "b" : "a"}
-          a="Save profile"
+          a={label}
           b={pending ? "Saving" : "Saved"}
         />
       </span>

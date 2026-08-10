@@ -1,8 +1,18 @@
 import { revalidatePath } from "next/cache";
 import { getProfile, saveProfile } from "@/lib/profile";
-import { providerStatus } from "@/lib/ai/provider";
 import { dialect } from "@/lib/db";
+import {
+  PROVIDER_LABEL,
+  TASKS,
+  UPGRADES,
+  defaultModel,
+  providerConfigured,
+  type Provider,
+  type Task,
+} from "@/lib/ai/models";
+import { getSettings, saveSettings, type Settings } from "@/lib/settings";
 import SubmitButton from "./submit-button";
+import AiForm from "./ai-form";
 
 export const dynamic = "force-dynamic";
 
@@ -20,6 +30,30 @@ async function save(formData: FormData) {
   revalidatePath("/settings");
 }
 
+async function saveAi(formData: FormData) {
+  "use server";
+  const taskProvider: Partial<Record<Task, Provider>> = {};
+  const taskModel: Partial<Record<Task, string>> = {};
+  for (const t of TASKS) {
+    const p = formData.get(`provider_${t}`);
+    const m = formData.get(`model_${t}`);
+    if (typeof p === "string" && p) taskProvider[t] = p as Provider;
+    if (typeof m === "string" && m) taskModel[t] = m;
+  }
+  const next: Settings = {
+    taskProvider,
+    taskModel,
+    sources: {
+      serper: formData.get("src_serper") === "on",
+      hunter: formData.get("src_hunter") === "on",
+      exa: formData.get("src_exa") === "on",
+    },
+    exaMaxPerSearch: Number(formData.get("exa_cap") ?? 3) || 3,
+  };
+  await saveSettings(next);
+  revalidatePath("/settings");
+}
+
 const field =
   "field w-full rounded-md border border-[var(--color-line)] bg-[var(--color-surface)] px-3 py-2 text-sm";
 const label = "block text-[13px] font-medium mb-1.5";
@@ -32,10 +66,21 @@ export default async function SettingsPage() {
   const gmailReady = Boolean(
     process.env.GMAIL_USER && process.env.GMAIL_APP_PASSWORD,
   );
-  const ai = providerStatus();
+  const settings = await getSettings();
+  const providers = (["anthropic", "openai", "openrouter"] as Provider[]).map(
+    (id) => ({ id, label: PROVIDER_LABEL[id], configured: providerConfigured(id) }),
+  );
+  const defaults = Object.fromEntries(
+    providers.map((p) => [
+      p.id,
+      Object.fromEntries(TASKS.map((t) => [t, defaultModel(t, p.id)])),
+    ]),
+  ) as Record<Provider, Record<Task, string>>;
   const keys: [string, string | undefined, boolean][] = [
     ["ANTHROPIC_API_KEY", process.env.ANTHROPIC_API_KEY, false],
     ["OPENAI_API_KEY", process.env.OPENAI_API_KEY, false],
+    ["OPENROUTER_API_KEY", process.env.OPENROUTER_API_KEY, false],
+    ["EXA_API_KEY", process.env.EXA_API_KEY, false],
     ["SERPER_API_KEY", process.env.SERPER_API_KEY, false],
     ["HUNTER_API_KEY", process.env.HUNTER_API_KEY, false],
     ["GMAIL_USER + GMAIL_APP_PASSWORD", gmailReady ? "set" : undefined, false],
@@ -78,30 +123,11 @@ export default async function SettingsPage() {
             </li>
           ))}
         </ul>
-        <div className="mt-3 space-y-1.5 rounded-lg border border-[var(--color-line)] bg-[var(--color-surface)] px-4 py-3 text-[11px]">
-          <div className="flex justify-between gap-4">
-            <span className="text-[var(--color-faint)]">LLM provider</span>
-            <span>
-              {ai.active ? (
-                <>
-                  <strong>{ai.active}</strong>
-                  <span className="text-[var(--color-faint)]">
-                    {" "}
-                    &middot; {ai.model?.write} &middot; extraction{" "}
-                    {ai.model?.extract}
-                  </span>
-                </>
-              ) : (
-                <span className="text-red-600">
-                  none — set ANTHROPIC_API_KEY or OPENAI_API_KEY
-                </span>
-              )}
-            </span>
-          </div>
-          <div className="flex justify-between gap-4">
-            <span className="text-[var(--color-faint)]">Database</span>
-            <span>{dialect() === "postgres" ? "Postgres / Supabase" : "SQLite (local file)"}</span>
-          </div>
+        <div className="mt-3 flex justify-between gap-4 rounded-lg border border-[var(--color-line)] bg-[var(--color-surface)] px-4 py-3 text-[11px]">
+          <span className="text-[var(--color-faint)]">Database</span>
+          <span>
+            {dialect() === "postgres" ? "Postgres / Supabase" : "SQLite (local file)"}
+          </span>
         </div>
 
         <p className={hint}>
@@ -113,6 +139,16 @@ export default async function SettingsPage() {
           2-Step Verification &rarr; App passwords.
         </p>
       </section>
+
+      <div className="enter" style={{ "--enter-delay": "60ms" } as React.CSSProperties}>
+        <AiForm
+          action={saveAi}
+          settings={settings}
+          providers={providers}
+          upgrades={UPGRADES}
+          defaults={defaults}
+        />
+      </div>
 
       <form
         action={save}

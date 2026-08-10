@@ -7,3 +7,6 @@ data/
 *.log
 next-env.d.ts
 .DS_Store
+
+# build artifacts
+tsconfig.tsbuildinfo
