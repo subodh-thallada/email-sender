@@ -1,10 +1,15 @@
 import { all, newId, nowStamp, one, run, todayStamp } from "../db";
 import { getProfile } from "../profile";
-import { gmailConfigured, sendMail } from "./gmail";
+import { defaultAccount, NotConnectedError } from "../google/accounts";
+import { sendMail } from "./gmail";
+import { trackingFor } from "./tracking";
 
 export interface OutboxRow {
   id: string;
   person_id: string | null;
+  /** Connected account this was queued against. Null on rows queued before
+   * sending moved to OAuth — those fall back to whatever is connected now. */
+  from_email: string | null;
   to_address: string;
   subject: string;
   body: string;
@@ -22,6 +27,9 @@ export function toStamp(d: Date): string {
 
 export async function enqueue(input: {
   personId?: string | null;
+  /** Account to send as, recorded now so a later reconnect to a different
+   * address does not silently send this from the wrong mailbox. */
+  from: string;
   to: string;
   subject: string;
   body: string;
@@ -29,11 +37,12 @@ export async function enqueue(input: {
 }): Promise<string> {
   const id = newId("out");
   await run(
-    `INSERT INTO outbox (id, person_id, to_address, subject, body, scheduled_at, created_at)
-     VALUES (?,?,?,?,?,?,?)`,
+    `INSERT INTO outbox (id, person_id, from_email, to_address, subject, body, scheduled_at, created_at)
+     VALUES (?,?,?,?,?,?,?,?)`,
     [
       id,
       input.personId ?? null,
+      input.from,
       input.to,
       input.subject,
       input.body,
@@ -84,7 +93,6 @@ export interface FlushResult {
  */
 export async function flushDue(now = new Date()): Promise<FlushResult> {
   const result: FlushResult = { due: 0, sent: 0, failed: 0, skippedByCap: 0 };
-  if (!gmailConfigured()) return result;
 
   const rows = await all<OutboxRow>(
     `SELECT * FROM outbox WHERE status = 'pending' AND scheduled_at <= ?
@@ -95,6 +103,7 @@ export async function flushDue(now = new Date()): Promise<FlushResult> {
   if (!rows.length) return result;
 
   const profile = await getProfile();
+  const fallback = await defaultAccount();
   let count = await sentToday();
 
   for (const row of rows) {
@@ -104,11 +113,25 @@ export async function flushDue(now = new Date()): Promise<FlushResult> {
     }
 
     try {
+      const from = row.from_email ?? fallback?.email;
+      if (!from) {
+        throw new NotConnectedError(
+          "No Gmail account is connected. Connect one in Settings.",
+        );
+      }
+
+      // Minted here rather than at queue time: tracking may have been switched
+      // on or off in the hours between scheduling and sending, and the setting
+      // that matters is the one in force when the message actually goes out.
+      const tracking = await trackingFor();
+
       const { messageId } = await sendMail({
+        from,
         to: row.to_address,
         subject: row.subject,
         body: row.body,
         fromName: profile.full_name || undefined,
+        pixelUrl: tracking?.url,
       });
 
       await run(
@@ -117,8 +140,8 @@ export async function flushDue(now = new Date()): Promise<FlushResult> {
         [messageId, nowStamp(), row.id],
       );
       await run(
-        `INSERT INTO sends (id, draft_id, person_id, to_address, subject, message_id, status, sent_at)
-         VALUES (?,?,?,?,?,?, 'sent', ?)`,
+        `INSERT INTO sends (id, draft_id, person_id, to_address, subject, message_id, status, track_token, sent_at)
+         VALUES (?,?,?,?,?,?, 'sent', ?, ?)`,
         [
           newId("snd"),
           row.id,
@@ -126,6 +149,7 @@ export async function flushDue(now = new Date()): Promise<FlushResult> {
           row.to_address,
           row.subject,
           messageId,
+          tracking?.token ?? null,
           nowStamp(),
         ],
       );
@@ -133,6 +157,19 @@ export async function flushDue(now = new Date()): Promise<FlushResult> {
       result.sent += 1;
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
+      result.failed += 1;
+
+      // A missing or revoked grant is not this message's fault, and the cron
+      // ticks every 15 minutes — counting it would burn all three attempts
+      // within the hour it takes someone to notice and reconnect.
+      if (err instanceof NotConnectedError) {
+        await run("UPDATE outbox SET error = ? WHERE id = ?", [
+          message,
+          row.id,
+        ]);
+        continue;
+      }
+
       // Three strikes, then stop retrying — a bad address should not be
       // retried on every cron tick forever.
       await run(
@@ -141,7 +178,6 @@ export async function flushDue(now = new Date()): Promise<FlushResult> {
          WHERE id = ?`,
         [message, row.id],
       );
-      result.failed += 1;
     }
   }
 

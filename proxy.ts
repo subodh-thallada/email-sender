@@ -33,6 +33,14 @@ export async function proxy(req: NextRequest) {
 
   // The cron runner authenticates with CRON_SECRET, not a session.
   if (pathname.startsWith("/api/cron/")) return NextResponse.next();
+
+  // Read-receipt pixels are fetched by the recipient's mail client, which has
+  // no session and never will. The token in the path is the only credential,
+  // and it grants nothing beyond recording that one message was opened.
+  // (The static-asset matcher below already lets these through by extension —
+  // this makes it deliberate rather than a side effect of ending in .gif.)
+  if (pathname.startsWith("/api/track/")) return NextResponse.next();
+
   if (PUBLIC.some((p) => pathname.startsWith(p))) return NextResponse.next();
 
   if (!configured()) {

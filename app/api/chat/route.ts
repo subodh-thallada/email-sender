@@ -2,6 +2,7 @@ import { one } from "@/lib/db";
 import { getProfile } from "@/lib/profile";
 import { streamMessages, type ChatTurn } from "@/lib/ai/provider";
 import { buildPrompt } from "@/lib/ai/write-email";
+import { withInstructions } from "@/lib/ai/personalize";
 import { requireUser } from "@/lib/auth";
 import type { Dossier } from "@/lib/types";
 
@@ -59,7 +60,10 @@ export async function POST(req: Request) {
   const profile = await getProfile();
 
   const messages: ChatTurn[] = [
-    { role: "system", content: SYSTEM },
+    // Standing instructions ride along here too: a revision that quietly
+    // dropped the user's "always link the pricing page" rule would undo it on
+    // every edit after the first.
+    { role: "system", content: withInstructions(SYSTEM, profile) },
     {
       role: "system",
       content: `Context you may draw on:\n\n${buildPrompt(profile, {

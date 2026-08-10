@@ -204,6 +204,63 @@ export interface ChatTurn {
   content: string;
 }
 
+/**
+ * Non-streaming text. Bulk drafting needs this: twenty concurrent streams have
+ * nowhere to stream *to*, and unlike streamMessages a failure here has to be
+ * throwable so one bad draft can be reported per person instead of being
+ * written into the body as an error string.
+ */
+export async function generateText({
+  task,
+  system,
+  user,
+  maxTokens = 16000,
+}: Call): Promise<string> {
+  const { provider, model } = await resolveTask(task);
+  const effort = EFFORT[task];
+
+  if (provider === "anthropic") {
+    const res = await anthropic().messages.create({
+      model,
+      max_tokens: maxTokens,
+      system,
+      output_config: { effort },
+      messages: [{ role: "user", content: user }],
+    });
+    return res.content
+      .map((b) => (b.type === "text" ? b.text : ""))
+      .join("")
+      .trim();
+  }
+
+  const client = oaiFor(provider);
+  let lastErr: unknown = null;
+
+  for (const candidate of candidateModels(provider, task, model)) {
+    try {
+      const res = await client.chat.completions.create({
+        model: candidate,
+        ...(provider === "openai" ? { reasoning_effort: effort } : {}),
+        max_completion_tokens: maxTokens,
+        messages: [
+          { role: "system", content: system },
+          { role: "user", content: user },
+        ],
+      });
+      const text = res.choices[0]?.message.content?.trim();
+      if (text) return text;
+      lastErr = new Error(`${candidate} returned an empty completion.`);
+    } catch (err) {
+      lastErr = err;
+      if (!isTransient(err)) break;
+    }
+  }
+
+  throw lastErr instanceof Error
+    ? lastErr
+    : new Error("No model produced a draft.");
+}
+
 /** Multi-turn stream, used by draft chat. */
 export function streamMessages(
   task: Task,

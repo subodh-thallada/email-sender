@@ -1,5 +1,8 @@
+import { createHash } from "node:crypto";
 import * as z from "zod";
 import { generateObject } from "./provider";
+import { withInstructions } from "./personalize";
+import { getProfile } from "../profile";
 import { resolveTask } from "../settings";
 import { cached, DAY } from "../cache";
 import type { ParsedQuery } from "../types";
@@ -44,11 +47,22 @@ Rules:
 
 export async function parseQuery(query: string): Promise<ParsedQuery> {
   const { model } = await resolveTask("parse");
-  const key = `parse:${model}:${query}`;
+  const profile = await getProfile();
+  const system = withInstructions(SYSTEM, profile);
+
+  // The instructions are part of the prompt, so they are part of the cache
+  // identity. Without this, editing "focus on Canada" in Settings would leave
+  // every previously-run query resolving to its pre-edit filters for 30 days.
+  const fingerprint = createHash("sha256")
+    .update(profile.instructions.trim())
+    .digest("hex")
+    .slice(0, 12);
+
+  const key = `parse:${model}:${fingerprint}:${query}`;
   return cached<ParsedQuery>(key, 30 * DAY, async () => {
     const parsed = await generateObject(
       Schema,
-      { task: "parse", system: SYSTEM, user: query, maxTokens: 4000 },
+      { task: "parse", system, user: query, maxTokens: 4000 },
       "search_intent",
     );
     if (!parsed) {

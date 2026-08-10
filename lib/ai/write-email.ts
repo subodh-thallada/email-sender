@@ -1,27 +1,58 @@
-import { streamText } from "./provider";
+import { generateText, streamText } from "./provider";
+import { withInstructions } from "./personalize";
+import { linkList } from "../profile";
 import type { Dossier, Profile } from "../types";
 
-const SYSTEM = `You write one cold email from a student or early-career researcher to a specific academic. Output plain text in exactly this shape:
+/** Rules that hold whoever is writing to whoever. */
+const SHARED = `Output plain text in exactly this shape:
 
 Subject: <subject line>
 
 <body>
 
-Nothing else — no preamble, no commentary, no markdown.
+Nothing else — no preamble, no commentary, no markdown code fence.
+
+Hard rules:
+- Never invent a fact about either person. Use only what you are given. If you have nothing specific about them, say plainly what drew you to their area rather than fabricating a detail.
+- No flattery openers: no "I hope this finds you well", "I was blown away", "your groundbreaking work", "I am reaching out to express my strong interest".
+- No filler transitions ("Moreover", "Furthermore", "That said"). No rhetorical questions. No exclamation marks.
+- Write plain declarative sentences. Don't lean on em dashes or tricolon lists.
+- The subject line is 4-8 words, specific and factual. Not clickbait.
+- End with the sender's signature exactly as provided, if provided.`;
+
+const ACADEMIC = `You write one cold email from a student or early-career researcher to a specific academic.
+
+${SHARED}
 
 What makes these emails work:
 - Open with the actual reason you are writing to THIS person. Name a specific paper, project, or lab of theirs and say something concrete about it — what it does, what problem it solves, how it connects to what the sender has done. One sentence of real substance beats a paragraph of admiration.
 - Say who the sender is in one line, using the details in their profile. Concrete beats impressive: a named project or technology the sender actually worked on.
 - Make one small, clear, easy-to-answer ask. "Are you taking students this summer?" is answerable. "I would love to discuss opportunities" is not.
-- 120-160 words in the body. Academics skim.
+- 120-160 words in the body. Academics skim.`;
 
-Hard rules:
-- Never invent a fact about either person. Use only what you are given. If you have nothing specific about their work, say plainly that you follow the lab's area rather than fabricating a paper.
-- No flattery openers: no "I hope this finds you well", "I was blown away", "your groundbreaking work", "I am reaching out to express my strong interest".
-- No filler transitions ("Moreover", "Furthermore", "That said"). No rhetorical questions. No exclamation marks.
-- Write plain declarative sentences. Don't lean on em dashes or tricolon lists.
-- The subject line is 4-8 words, specific and factual. Not clickbait, not just "Research opportunity".
-- End with the sender's signature exactly as provided, if provided.`;
+const BUSINESS = `You write one cold outreach email from a freelancer or small business to a specific prospective client.
+
+${SHARED}
+
+What makes these emails work:
+- Open with the actual reason you are writing to THIS company or person — something you can see about their business, site, role, or recent work — and connect it in one sentence to the problem the sender solves. Specific observation first, pitch second.
+- State what the sender does in one line, in the recipient's terms: the outcome they get, not the sender's job title. Name a comparable client or a concrete result only if you were given one.
+- Make one small, clear, easy-to-answer ask. "Worth a 15-minute call next week?" is answerable. "Let me know if you'd like to explore synergies" is not.
+- 90-130 words in the body. A stranger selling something gets less patience than a student asking a question.
+- Never claim to have used their product, visited their store, or spoken to them before unless you were told so.`;
+
+/**
+ * Which of the two the sender is. The memory profile decides: someone who has
+ * described an offer and an audience is pitching a service, and the academic
+ * framing would make them sound like a student asking for a lab position.
+ */
+export function isBusinessSender(profile: Profile): boolean {
+  return profile.offer.trim().length > 15 && profile.audience.trim().length > 5;
+}
+
+export function systemFor(profile: Profile): string {
+  return withInstructions(isBusinessSender(profile) ? BUSINESS : ACADEMIC, profile);
+}
 
 export function buildPrompt(
   profile: Profile,
@@ -48,18 +79,27 @@ export function buildPrompt(
         .join("\n")
     : "(no details found)";
 
+  const links = linkList(profile);
+
   return [
     "RECIPIENT",
     `Name: ${person.name}`,
     person.title ? `Title: ${person.title}` : "",
-    person.org ? `Institution: ${person.org}` : "",
+    person.org ? `Institution / company: ${person.org}` : "",
     theirWork,
     "",
     "SENDER",
     `Name: ${profile.full_name || "(not set)"}`,
     profile.headline ? `Headline: ${profile.headline}` : "",
+    profile.offer ? `What they offer: ${profile.offer}` : "",
+    profile.audience ? `Who they serve: ${profile.audience}` : "",
     profile.background ? `Background:\n${profile.background}` : "",
     profile.goal ? `What they want: ${profile.goal}` : "",
+    links.length
+      ? `Links they may cite (use verbatim, never invent one):\n${links
+          .map((l) => `  - ${l}`)
+          .join("\n")}`
+      : "",
     `Tone: ${profile.tone}`,
     profile.signature ? `Signature:\n${profile.signature}` : "",
   ]
@@ -75,8 +115,50 @@ export function streamEmail(
 ): ReadableStream<Uint8Array> {
   return streamText({
     task: "write",
-    system: SYSTEM,
+    system: systemFor(profile),
     user: buildPrompt(profile, person, dossier),
     maxTokens: 16000,
   });
+}
+
+export interface WrittenEmail {
+  subject: string;
+  body: string;
+}
+
+/**
+ * Splits the model's `Subject: ...\n\n<body>` output.
+ *
+ * Tolerant on purpose: a model that forgets the blank line, or the label, is
+ * still holding a usable email, and throwing it away over formatting would
+ * lose a paid generation. Only a completely empty body is a failure.
+ */
+export function parseEmail(raw: string): WrittenEmail {
+  const text = raw.trim().replace(/^```(?:\w+)?\s*|\s*```$/g, "");
+  const match = text.match(/^\s*subject:\s*(.+?)\s*(?:\n|$)/i);
+
+  if (!match) return { subject: "", body: text };
+
+  return {
+    subject: match[1].trim(),
+    body: text.slice(match[0].length).replace(/^\s*\n/, "").trim(),
+  };
+}
+
+/** One complete draft, written in a single non-streaming call. */
+export async function writeEmail(
+  profile: Profile,
+  person: { name: string; title: string | null; org: string | null },
+  dossier: Dossier | null,
+): Promise<WrittenEmail> {
+  const raw = await generateText({
+    task: "write",
+    system: systemFor(profile),
+    user: buildPrompt(profile, person, dossier),
+    maxTokens: 16000,
+  });
+
+  const parsed = parseEmail(raw);
+  if (!parsed.body.trim()) throw new Error("The model returned an empty draft.");
+  return parsed;
 }

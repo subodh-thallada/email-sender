@@ -4,6 +4,46 @@ Search for people in plain English, get their profile and email address, and dra
 
 Academic search is the strong path: it runs on [OpenAlex](https://openalex.org), which is free, needs no API key, and has real coverage of university researchers.
 
+## Outreach features
+
+All configured under **Settings**.
+
+**Memory profile.** Describe your business once — what you offer, who you serve,
+what you have done — and it fills in the structured fields every later draft is
+written from. It only fills blanks, never overwrites what you typed, and never
+saves without you pressing Save: these values end up in mail sent to strangers
+under your name. Filling in both *offer* and *audience* switches the writer from
+academic outreach to a client pitch.
+
+**Personalize.** Standing instructions ("never open with a question", "only
+target people in Canada", "keep it under 100 words"). They outrank the built-in
+rules everywhere — drafting, revising, and deciding who is worth writing to. The
+one thing they cannot do is authorise inventing a fact.
+
+**Bulk drafting.** Select people on a results page and draft them in one click.
+Each draft is written and saved independently, so one failure costs one person
+rather than the batch, and drafts survive a reload. The per-click ceiling and the
+concurrency are both settings — concurrency is deliberately low, since a burst of
+twenty is the fastest way to get rate-limited on every one of them.
+
+**Read receipts.** A 1×1 pixel per message, recorded on load. Off by default, and
+skipped entirely unless `APP_URL` points at a real deployed origin. Read the
+numbers loosely: Gmail proxies and caches the image, Apple Mail Privacy
+Protection loads it on delivery whether or not anyone looked, and a recipient
+with images off never registers at all. Enabling it also forces an HTML part on
+every message, which reads slightly more like bulk mail than plain text does.
+
+**Peak-time scheduling.** "Send at the next peak time" picks the next Tuesday–
+Thursday mid-morning slot and queues it, staggering a batch rather than firing it
+all at once. The window is computed in *your* timezone, because nothing in the
+pipeline establishes the recipient's — for outreach across continents, use the
+manual time picker instead.
+
+**Research depth.** Basic / deeper / deepest, controlling pages read per person,
+candidates pulled before filtering, and whether Exa runs alongside Serper. Every
+tier costs strictly more than the one below it. The `exaMaxPerSearch` cap still
+applies on top, and the lower of the two wins.
+
 ## Setup
 
 ```bash
@@ -23,12 +63,40 @@ Open http://localhost:3000.
 | `SERPER_API_KEY` | Finding faculty pages. **Unused when your query already has an address** | 2,500/month free — [serper.dev](https://serper.dev) |
 | `OPENALEX_MAILTO` | Politeness header for OpenAlex | Free, no signup |
 | `HUNTER_API_KEY` | Last-resort email lookup | 50/month free — optional |
-| `GMAIL_USER` / `GMAIL_APP_PASSWORD` | Sending | Free — needed only to send |
+| `GOOGLE_CLIENT_ID` / `GOOGLE_CLIENT_SECRET` | Sending — you connect Gmail from Settings | Free |
+| `TOKEN_ENCRYPTION_KEY` | Encrypts stored Google refresh tokens | Free |
 | `DATABASE_URL` | SQLite file locally, Postgres/Supabase when deployed | Free tiers |
 
 Exa is not used anywhere and needs no key.
 
-**Gmail App Password**, not your account password. Turn on 2-Step Verification, then Google Account → Security → 2-Step Verification → App passwords. (OAuth is deliberately avoided: `gmail.send` is a restricted scope whose refresh tokens expire every 7 days outside a verified production app.)
+### Connecting Gmail
+
+No password is stored anywhere. At [console.cloud.google.com](https://console.cloud.google.com):
+
+1. **APIs & Services → Library** → enable **Gmail API**.
+2. **OAuth consent screen** → External.
+3. **Credentials → Create OAuth client ID → Web application**, with these authorized redirect URIs:
+   - `http://localhost:3000/api/google/callback`
+   - `https://<your-domain>/api/google/callback`
+
+Then generate the encryption key and connect from **Settings → Sending**:
+
+```bash
+node -e "console.log(require('crypto').randomBytes(32).toString('base64'))"
+```
+
+The only scope requested is `gmail.send` — this app can send as you and cannot
+read your mailbox. Revoke it from Settings or at
+[myaccount.google.com/permissions](https://myaccount.google.com/permissions).
+
+**Set the publishing status to "In production", not "Testing".** While an OAuth
+consent screen sits in Testing, Google expires every refresh token after 7 days,
+so sending would silently break each week and need reconnecting. Publishing
+without verification is fine — you get the "Google hasn't verified this app"
+interstitial (Advanced → Go to … ) and a 100-user ceiling. `gmail.send` is a
+*sensitive* scope, so lifting that ceiling needs Google's app verification but
+not the third-party security assessment that *restricted* scopes like
+`gmail.readonly` require.
 
 Fill in your profile on **Settings** before drafting — the writer uses your background to make emails specific, and refuses to draft without it.
 
@@ -91,6 +159,7 @@ npx tsx --env-file=.env scripts/check-academic.ts     # OpenAlex discovery on a 
 npx tsx scripts/check-deobfuscate.ts                        # 19 patterns + 3 live faculty pages
 npx tsx --env-file=.env scripts/check-waterfall.ts    # scrape → learn → infer → verify
 npx tsx --env-file=.env scripts/check-db.ts           # schema + profile round-trip
+npx tsx scripts/check-sema.ts                               # peak times, pixel, draft parsing, depth
 ```
 
 ## Deploying to Vercel
@@ -109,7 +178,7 @@ Locally that is fine: only you can reach `localhost`.
 Note these are two separate things:
 
 - **Logging into this app** — none today. Supabase Auth email+password works fine and needs no Google setup. Google OAuth is optional polish, not a requirement.
-- **Sending as you** — already handled by the Gmail App Password, and unaffected by whichever login you pick.
+- **Sending as you** — the Google OAuth grant above, independent of whichever login you pick. Nothing is sent until an account is connected in Settings.
 
 ## Limits
 

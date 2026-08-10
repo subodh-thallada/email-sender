@@ -1,5 +1,12 @@
 import { nowStamp, one, run } from "./db";
 import {
+  DEPTHS,
+  DEPTH_LABEL,
+  DEPTH_PROFILE,
+  type Depth,
+  type DepthProfile,
+} from "./depth";
+import {
   configuredProviders,
   defaultModel,
   defaultProvider,
@@ -24,8 +31,18 @@ export interface Settings {
     /** Off by default — the credit pool is small. */
     exa: boolean;
   };
-  /** Hard ceiling on Exa calls per search, so one run cannot drain the pool. */
+  /** Hard ceiling on Exa calls per search, so one run cannot drain the pool.
+   *  Applied on top of the depth tier: the lower of the two wins. */
   exaMaxPerSearch: number;
+  /** How hard to dig per person. */
+  depth: Depth;
+  /** How many drafts one bulk request may write at once. */
+  bulkDraftLimit: number;
+  /** Concurrent LLM calls during a bulk draft. Kept well under the bulk limit
+   *  so a batch of 20 does not trip provider rate limits. */
+  bulkDraftConcurrency: number;
+  /** Add a tracking pixel to outgoing mail and record opens. */
+  trackOpens: boolean;
 }
 
 const DEFAULTS: Settings = {
@@ -33,6 +50,10 @@ const DEFAULTS: Settings = {
   taskModel: {},
   sources: { serper: true, hunter: true, exa: false },
   exaMaxPerSearch: 3,
+  depth: "deeper",
+  bulkDraftLimit: 10,
+  bulkDraftConcurrency: 3,
+  trackOpens: false,
 };
 
 const KEY = "settings";
@@ -79,6 +100,22 @@ export async function resolveTask(
   return { provider, model };
 }
 
+/**
+ * The active depth tier, with the Exa allowance already clamped by the user's
+ * own ceiling. Callers get one object and never have to remember that the two
+ * settings interact.
+ */
+export async function resolveDepth(): Promise<DepthProfile & { depth: Depth }> {
+  const s = await getSettings();
+  const depth = DEPTH_PROFILE[s.depth] ? s.depth : DEFAULTS.depth;
+  const profile = DEPTH_PROFILE[depth];
+  return {
+    ...profile,
+    depth,
+    exaCalls: Math.min(profile.exaCalls, s.exaMaxPerSearch),
+  };
+}
+
 export async function sourceEnabled(
   name: keyof Settings["sources"],
 ): Promise<boolean> {
@@ -90,3 +127,7 @@ export async function sourceEnabled(
 }
 
 export { configuredProviders };
+/** Re-exported for server-side callers. Client components must import these
+ *  from lib/depth directly — reaching them through this module would pull the
+ *  database driver into the browser bundle. */
+export { DEPTHS, DEPTH_LABEL, DEPTH_PROFILE, type Depth, type DepthProfile };
