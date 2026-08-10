@@ -3,7 +3,7 @@ import { zodOutputFormat } from "@anthropic-ai/sdk/helpers/zod";
 import OpenAI from "openai";
 import { zodResponseFormat } from "openai/helpers/zod";
 import * as z from "zod";
-import { EFFORT, type Provider, type Task } from "./models";
+import { EFFORT, UPGRADES, type Provider, type Task } from "./models";
 import { resolveTask } from "../settings";
 
 /**
@@ -46,6 +46,26 @@ function oaiFor(provider: Provider): OpenAI {
   return provider === "openrouter" ? openrouter() : openai();
 }
 
+/** 429 / 5xx — worth trying a different model. 400s are not. */
+function isTransient(err: unknown): boolean {
+  const status = (err as { status?: number })?.status;
+  return status === 429 || status === 502 || status === 503 || (status ?? 0) >= 500;
+}
+
+/**
+ * OpenRouter's free models sit behind a shared upstream pool and return 429
+ * whenever that pool is busy, which is often. Falling back through the other
+ * free models for the same task is the difference between "free tier" and
+ * "free tier that works".
+ *
+ * Paid providers get no fallback: a 429 there means your own quota, and
+ * silently retrying on a pricier model would spend money you didn't ask to.
+ */
+function candidateModels(provider: Provider, task: Task, first: string): string[] {
+  if (provider !== "openrouter") return [first];
+  return [...new Set([first, ...(UPGRADES.openrouter[task] ?? [])])];
+}
+
 export interface Call {
   task: Task;
   system: string;
@@ -73,30 +93,48 @@ export async function generateObject<S extends z.ZodType>(
   }
 
   const client = oaiFor(provider);
+  const models = candidateModels(provider, task, model);
+  let lastTransient: unknown = null;
 
-  try {
-    const res = await client.chat.completions.parse({
-      model,
-      // OpenRouter's free models mostly ignore reasoning params; sending them
-      // to a model that rejects them is what the catch below is for.
-      ...(provider === "openai" ? { reasoning_effort: effort } : {}),
-      max_completion_tokens: maxTokens,
-      response_format: zodResponseFormat(schema, schemaName),
-      messages: [
-        { role: "system", content: system },
-        { role: "user", content: user },
-      ],
-    });
-    const parsed = res.choices[0]?.message.parsed as z.infer<S> | undefined;
-    if (parsed) return parsed;
-  } catch (err) {
-    if (provider === "openai") throw err;
-    // Fall through: many OpenRouter models advertise but don't honour
-    // json_schema. Retry by asking for JSON in the prompt instead.
-    console.warn(`json_schema failed on ${model}, retrying as plain JSON`, err);
+  for (const candidate of models) {
+    try {
+      const res = await client.chat.completions.parse({
+        model: candidate,
+        ...(provider === "openai" ? { reasoning_effort: effort } : {}),
+        max_completion_tokens: maxTokens,
+        response_format: zodResponseFormat(schema, schemaName),
+        messages: [
+          { role: "system", content: system },
+          { role: "user", content: user },
+        ],
+      });
+      const parsed = res.choices[0]?.message.parsed as z.infer<S> | undefined;
+      if (parsed) return parsed;
+    } catch (err) {
+      if (provider === "openai") throw err;
+      if (isTransient(err)) {
+        lastTransient = err;
+        console.warn(`${candidate} unavailable (${(err as { status?: number }).status}), trying next`);
+        continue;
+      }
+      // Not transient: the model likely advertises json_schema without
+      // honouring it. Ask for plain JSON on this same model instead.
+      console.warn(`json_schema failed on ${candidate}, retrying as plain JSON`);
+    }
+
+    try {
+      const out = await jsonFallback(
+        client, candidate, schema, system, user, maxTokens,
+      );
+      if (out) return out;
+    } catch (err) {
+      if (!isTransient(err)) throw err;
+      lastTransient = err;
+    }
   }
 
-  return jsonFallback(client, model, schema, system, user, maxTokens);
+  if (lastTransient) throw lastTransient;
+  return null;
 }
 
 /**
@@ -199,23 +237,44 @@ export function streamMessages(
           stream.on("text", (d) => controller.enqueue(encoder.encode(d)));
           await stream.finalMessage();
         } else {
-          const stream = await oaiFor(provider).chat.completions.create({
-            model,
-            ...(provider === "openai" ? { reasoning_effort: effort } : {}),
-            max_completion_tokens: maxTokens,
-            stream: true,
-            messages: [
-              ...(system ? [{ role: "system" as const, content: system }] : []),
-              ...rest.map((m) => ({
-                role: m.role as "user" | "assistant",
-                content: m.content,
-              })),
-            ],
-          });
-          for await (const chunk of stream) {
-            const delta = chunk.choices[0]?.delta?.content;
-            if (delta) controller.enqueue(encoder.encode(delta));
+          const client = oaiFor(provider);
+          const payload = [
+            ...(system ? [{ role: "system" as const, content: system }] : []),
+            ...rest.map((m) => ({
+              role: m.role as "user" | "assistant",
+              content: m.content,
+            })),
+          ];
+
+          let opened = false;
+          let lastErr: unknown = null;
+
+          for (const candidate of candidateModels(provider, task, model)) {
+            try {
+              const stream = await client.chat.completions.create({
+                model: candidate,
+                ...(provider === "openai" ? { reasoning_effort: effort } : {}),
+                max_completion_tokens: maxTokens,
+                stream: true,
+                messages: payload,
+              });
+              for await (const chunk of stream) {
+                const delta = chunk.choices[0]?.delta?.content;
+                if (delta) {
+                  opened = true;
+                  controller.enqueue(encoder.encode(delta));
+                }
+              }
+              lastErr = null;
+              break;
+            } catch (err) {
+              lastErr = err;
+              // Once bytes are out the door we cannot restart on another
+              // model without duplicating text — surface the error instead.
+              if (opened || !isTransient(err)) break;
+            }
           }
+          if (lastErr) throw lastErr;
         }
       } catch (err) {
         controller.enqueue(
