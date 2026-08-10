@@ -2,6 +2,7 @@ import { newId, one, run, todayStamp } from "@/lib/db";
 import { getProfile } from "@/lib/profile";
 import { gmailConfigured, sendMail } from "@/lib/send/gmail";
 import { syntaxOk } from "@/lib/email/verify";
+import { enqueue } from "@/lib/send/outbox";
 
 export const runtime = "nodejs";
 
@@ -10,11 +11,13 @@ function fail(error: string, status = 400) {
 }
 
 export async function POST(req: Request) {
-  const { personId, to, subject, body } = (await req.json()) as {
+  const { personId, to, subject, body, scheduledAt } = (await req.json()) as {
     personId?: string;
     to?: string;
     subject?: string;
     body?: string;
+    /** ISO string. When present the message is queued instead of sent now. */
+    scheduledAt?: string;
   };
 
   if (!personId || !to || !subject?.trim() || !body?.trim()) {
@@ -50,6 +53,22 @@ export async function POST(req: Request) {
   );
   if (Number(already?.n ?? 0) > 0) {
     return fail("You already emailed this person.");
+  }
+
+  // Scheduled: queue it and return. The cron runner enforces the same cap.
+  if (scheduledAt) {
+    const when = new Date(scheduledAt);
+    if (Number.isNaN(when.getTime())) return fail("Invalid scheduled time.");
+    if (when.getTime() < Date.now() - 60_000) {
+      return fail("That time is in the past.");
+    }
+    if (!process.env.CRON_SECRET) {
+      return fail(
+        "Scheduling needs CRON_SECRET set and a cron job hitting /api/cron/send-due.",
+      );
+    }
+    const id = await enqueue({ personId, to, subject, body, scheduledAt: when });
+    return Response.json({ ok: true, scheduled: true, id, scheduledAt: when.toISOString() });
   }
 
   const draftId = newId("d");

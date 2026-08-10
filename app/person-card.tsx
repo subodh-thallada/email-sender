@@ -25,7 +25,7 @@ function badgeLabel(e: { source: string; confidence: EmailConfidence }): string 
   return CONFIDENCE_LABEL[e.confidence];
 }
 
-type SendStatus = "idle" | "confirm" | "sending" | "sent" | "error";
+type SendStatus = "idle" | "confirm" | "sending" | "sent" | "scheduled" | "error";
 
 export default function PersonCard({
   person,
@@ -42,6 +42,12 @@ export default function PersonCard({
   const [send, setSend] = useState<{ status: SendStatus; message?: string }>({
     status: "idle",
   });
+  const [when, setWhen] = useState("");
+  const [instruction, setInstruction] = useState("");
+  const [revising, setRevising] = useState(false);
+  const [history, setHistory] = useState<
+    { role: "user" | "assistant"; content: string }[]
+  >([]);
 
   const best = person.emails[0];
   const dossier = person.dossier;
@@ -83,6 +89,58 @@ export default function PersonCard({
     }
   }
 
+  /** Chat that edits the draft in place, on the cheap/free chat model. */
+  async function revise() {
+    const ask = instruction.trim();
+    if (!ask || revising) return;
+    setRevising(true);
+    setInstruction("");
+    setHistory((h) => [...h, { role: "user", content: ask }]);
+    const prevSubject = subject;
+    const prevBody = body;
+    try {
+      const res = await fetch("/api/chat", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          personId: person.id,
+          subject,
+          body,
+          instruction: ask,
+          history,
+        }),
+      });
+      if (!res.ok || !res.body) throw new Error(await res.text());
+
+      const reader = res.body.getReader();
+      const decoder = new TextDecoder();
+      let acc = "";
+      for (;;) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        acc += decoder.decode(value, { stream: true });
+        const idx = acc.indexOf("\n\n");
+        if (idx === -1) {
+          setSubject(acc.replace(/^Subject:\s*/i, ""));
+        } else {
+          setSubject(acc.slice(0, idx).replace(/^Subject:\s*/i, "").trim());
+          setBody(acc.slice(idx + 2));
+        }
+      }
+      setHistory((h) => [...h, { role: "assistant", content: acc }]);
+    } catch (e) {
+      // Never leave the editor holding a half-written revision.
+      setSubject(prevSubject);
+      setBody(prevBody);
+      setHistory((h) => [
+        ...h,
+        { role: "assistant", content: `(failed: ${e instanceof Error ? e.message : String(e)})` },
+      ]);
+    } finally {
+      setRevising(false);
+    }
+  }
+
   async function doSend() {
     if (!best) return;
     // A guessed address gets one extra beat of friction. The confidence is
@@ -96,11 +154,19 @@ export default function PersonCard({
       const res = await fetch("/api/send", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ personId: person.id, to: best.address, subject, body }),
+        body: JSON.stringify({
+          personId: person.id,
+          to: best.address,
+          subject,
+          body,
+          // datetime-local has no zone; the browser's own offset is what the
+          // user meant, so build the instant locally and send it as ISO.
+          scheduledAt: when ? new Date(when).toISOString() : undefined,
+        }),
       });
-      const data = (await res.json()) as { ok: boolean; error?: string };
+      const data = (await res.json()) as { ok: boolean; error?: string; scheduled?: boolean };
       if (!res.ok || !data.ok) throw new Error(data.error ?? `HTTP ${res.status}`);
-      setSend({ status: "sent" });
+      setSend({ status: data.scheduled ? "scheduled" : "sent" });
     } catch (e) {
       setSend({ status: "error", message: e instanceof Error ? e.message : String(e) });
     }
@@ -112,7 +178,8 @@ export default function PersonCard({
     !subject.trim() ||
     !body.trim() ||
     send.status === "sending" ||
-    send.status === "sent";
+    send.status === "sent" ||
+    send.status === "scheduled";
 
   return (
     <article
@@ -224,9 +291,82 @@ export default function PersonCard({
               value={body}
               onChange={(e) => setBody(e.target.value)}
               rows={12}
-              placeholder="Body"
+              placeholder="Body — markdown: **bold**, [link](https://…), - lists"
               className="field w-full resize-y rounded-md border border-[var(--color-line)] px-3 py-2 font-mono text-xs leading-relaxed"
             />
+
+            <div className="rounded-md border border-[var(--color-line)] bg-[var(--color-paper)] p-2">
+              {history.length > 0 && (
+                <ul className="mb-2 space-y-1">
+                  {history
+                    .filter((m) => m.role === "user")
+                    .slice(-3)
+                    .map((m, i) => (
+                      <li key={i} className="text-[11px] text-[var(--color-faint)]">
+                        &ldquo;{m.content}&rdquo;
+                      </li>
+                    ))}
+                </ul>
+              )}
+              <div className="flex gap-2">
+                <input
+                  value={instruction}
+                  onChange={(e) => setInstruction(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter" && !e.shiftKey) {
+                      e.preventDefault();
+                      void revise();
+                    }
+                  }}
+                  disabled={revising || drafting}
+                  placeholder="shorter, mention my ROS2 project, add a link to my repo…"
+                  className="field min-w-0 flex-1 rounded-md border border-[var(--color-line)] bg-[var(--color-surface)] px-2.5 py-1.5 text-[12px]"
+                />
+                <button
+                  type="button"
+                  onClick={() => void revise()}
+                  disabled={revising || drafting || !instruction.trim()}
+                  className="pressable shrink-0 rounded-md border border-[var(--color-line)] bg-[var(--color-surface)] px-2.5 py-1.5 text-[11px] font-medium disabled:opacity-40"
+                >
+                  <span className="flex items-center gap-1.5">
+                    {revising && <Spinner />}
+                    <Swap showing={revising ? "b" : "a"} a="Revise" b="Revising" />
+                  </span>
+                </button>
+              </div>
+              <p className="mt-1.5 text-[10px] text-[var(--color-faint)]">
+                Edits the draft in place. Runs on the chat model from Settings —
+                free on OpenRouter.
+              </p>
+            </div>
+
+            <div className="flex flex-wrap items-center gap-2 text-[11px] text-[var(--color-muted)]">
+              <label htmlFor={`when-${person.id}`}>Send</label>
+              <select
+                id={`when-${person.id}`}
+                className="field rounded-md border border-[var(--color-line)] px-2 py-1 text-[11px]"
+                value={when ? "later" : "now"}
+                onChange={(e) =>
+                  setWhen(
+                    e.target.value === "now"
+                      ? ""
+                      : localInput(new Date(Date.now() + 3600_000)),
+                  )
+                }
+              >
+                <option value="now">now</option>
+                <option value="later">at a time</option>
+              </select>
+              {when && (
+                <input
+                  type="datetime-local"
+                  value={when}
+                  min={localInput(new Date())}
+                  onChange={(e) => setWhen(e.target.value)}
+                  className="field rounded-md border border-[var(--color-line)] px-2 py-1 text-[11px]"
+                />
+              )}
+            </div>
 
             <div className="flex flex-wrap items-center gap-3">
               <button
@@ -240,7 +380,9 @@ export default function PersonCard({
               >
                 <span className="flex items-center gap-1.5">
                   {send.status === "sending" && <Spinner />}
-                  {label(send.status, best?.address)}
+                  {send.status === "idle" && when
+                    ? "Schedule"
+                    : label(send.status, best?.address)}
                 </span>
               </button>
 
@@ -276,9 +418,17 @@ function label(status: SendStatus, address?: string): string {
       return "Sending";
     case "sent":
       return "Sent";
+    case "scheduled":
+      return "Scheduled";
     case "confirm":
       return "Send anyway?";
     default:
       return address ? `Send to ${address}` : "No address";
   }
+}
+
+/** datetime-local wants local wall-clock, not ISO/UTC. */
+function localInput(d: Date): string {
+  const pad = (n: number) => String(n).padStart(2, "0");
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
 }

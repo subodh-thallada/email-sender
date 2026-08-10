@@ -1,6 +1,8 @@
 import { extractProfile } from "../ai/extract-profile";
 import { fetchPage } from "../sources/fetch-page";
 import { googleSearch, rankPersonPages } from "../sources/serper";
+import { exaSearch } from "../sources/exa";
+import { sourceEnabled } from "../settings";
 import { hunterFind } from "../sources/hunter";
 import type { Candidate, Dossier, FoundEmail } from "../types";
 import {
@@ -42,12 +44,18 @@ export function registrableDomain(host: string): string {
  */
 export async function discoverPerson(
   candidate: Candidate,
+  searchId = "adhoc",
 ): Promise<{ dossier: Dossier; emails: FoundEmail[] }> {
   const queryOrg = candidate.org ?? "";
-  const hits = await googleSearch(
-    `"${candidate.name}" ${queryOrg} email contact`,
-    8,
-  ).catch(() => []);
+  const query = `"${candidate.name}" ${queryOrg} email contact`;
+
+  // Serper first; Exa only if Serper is switched off or its quota is gone.
+  let hits = (await sourceEnabled("serper"))
+    ? await googleSearch(query, 8).catch(() => [])
+    : [];
+  if (hits.length === 0) {
+    hits = await exaSearch(query, searchId, 6).catch(() => []);
+  }
 
   const pages = (
     await Promise.all(
@@ -144,7 +152,7 @@ export async function discoverPerson(
   }
 
   /* --- 5. Hunter, genuinely last ---------------------------------------- */
-  if (found.length === 0 && mailDomain) {
+  if (found.length === 0 && mailDomain && (await sourceEnabled("hunter"))) {
     const h = await hunterFind(candidate.name, mailDomain);
     if (h) {
       push({

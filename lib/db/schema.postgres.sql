@@ -99,3 +99,27 @@ CREATE TABLE IF NOT EXISTS domain_patterns (
   samples     INTEGER NOT NULL DEFAULT 1,
   updated_at  TEXT NOT NULL DEFAULT (to_char(now() AT TIME ZONE 'utc', 'YYYY-MM-DD HH24:MI:SS'))
 );
+
+-- Dashboard-editable config. Overrides env defaults.
+CREATE TABLE IF NOT EXISTS app_settings (
+  key         TEXT PRIMARY KEY,
+  value       TEXT NOT NULL,
+  updated_at  TEXT NOT NULL DEFAULT (to_char(now() AT TIME ZONE 'utc', 'YYYY-MM-DD HH24:MI:SS'))
+);
+
+-- Queued / scheduled sends. A row here is a promise to send later.
+CREATE TABLE IF NOT EXISTS outbox (
+  id            TEXT PRIMARY KEY,
+  person_id     TEXT,
+  to_address    TEXT NOT NULL,
+  subject       TEXT NOT NULL,
+  body          TEXT NOT NULL,
+  scheduled_at  TEXT NOT NULL,
+  status        TEXT NOT NULL DEFAULT 'pending',
+  attempts      INTEGER NOT NULL DEFAULT 0,
+  error         TEXT,
+  message_id    TEXT,
+  sent_at       TEXT,
+  created_at    TEXT NOT NULL DEFAULT (to_char(now() AT TIME ZONE 'utc', 'YYYY-MM-DD HH24:MI:SS'))
+);
+CREATE INDEX IF NOT EXISTS idx_outbox_due ON outbox(status, scheduled_at);

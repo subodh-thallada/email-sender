@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 import Link from "next/link";
 import NavLink from "./ui/nav-link";
+import { currentUser } from "@/lib/auth";
 import "./globals.css";
 
 export const metadata: Metadata = {
@@ -8,11 +9,12 @@ export const metadata: Metadata = {
   description: "Search for people, find their emails, draft cold outreach.",
 };
 
-export default function RootLayout({
+export default async function RootLayout({
   children,
 }: {
   children: React.ReactNode;
 }) {
+  const user = await currentUser();
   return (
     <html lang="en">
       <body className="min-h-screen antialiased">
@@ -27,6 +29,17 @@ export default function RootLayout({
             <nav className="-mr-2 flex items-center gap-1">
               <NavLink href="/">Search</NavLink>
               <NavLink href="/settings">Settings</NavLink>
+              {user && (
+                <form action="/auth/signout" method="post" className="contents">
+                  <button
+                    type="submit"
+                    title={user.email}
+                    className="pressable pressable-subtle rounded-md px-2 py-1 text-[13px] text-[var(--color-muted)] hover:text-[var(--color-ink)]"
+                  >
+                    Sign out
+                  </button>
+                </form>
+              )}
             </nav>
           </div>
         </header>

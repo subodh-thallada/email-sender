@@ -1,6 +1,6 @@
 import * as z from "zod";
 import { generateObject } from "./provider";
-import { modelFor } from "./models";
+import { resolveTask } from "../settings";
 import { cached, DAY } from "../cache";
 
 const Schema = z.object({
@@ -68,7 +68,8 @@ export async function extractProfile(
     .join("\n\n")
     .slice(0, 45_000);
 
-  const cacheKey = `extract:${modelFor("extract")}:${name}:${pages.map((p) => p.url).join("|")}`;
+  const { model } = await resolveTask("extract");
+  const cacheKey = `extract:${model}:${name}:${pages.map((p) => p.url).join("|")}`;
 
   return cached<ExtractedProfile | null>(cacheKey, 14 * DAY, async () => {
     return generateObject(

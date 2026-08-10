@@ -1,4 +1,5 @@
 import nodemailer, { type Transporter } from "nodemailer";
+import { hasFormatting, markdownToHtml, markdownToPlain } from "./render";
 
 let transporter: Transporter | null = null;
 
@@ -27,6 +28,7 @@ function transport(): Transporter {
 export interface SendInput {
   to: string;
   subject: string;
+  /** Markdown. Rendered to an HTML part with a plain-text alternative. */
   body: string;
   fromName?: string;
 }
@@ -41,11 +43,16 @@ export async function sendMail(
   input: SendInput,
 ): Promise<{ messageId: string }> {
   const user = process.env.GMAIL_USER!;
+  const formatted = hasFormatting(input.body);
+
   const info = await transport().sendMail({
     from: input.fromName ? `"${input.fromName}" <${user}>` : user,
     to: input.to,
     subject: input.subject,
-    text: input.body,
+    // Always send text/plain. Add the HTML part only when the body actually
+    // uses formatting — a plain note sent as HTML looks more like bulk mail.
+    text: formatted ? markdownToPlain(input.body) : input.body,
+    ...(formatted ? { html: markdownToHtml(input.body) } : {}),
     replyTo: user,
   });
   return { messageId: info.messageId };

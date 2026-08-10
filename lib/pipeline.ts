@@ -91,7 +91,7 @@ export async function runSearch(
         limit(async () => {
           if (signal?.aborted) return;
           try {
-            const { dossier, emails } = await discoverPerson(c);
+            const { dossier, emails } = await discoverPerson(c, searchId);
             emit({
               type: "person",
               person: await persist(searchId, i, c, dossier, emails),
