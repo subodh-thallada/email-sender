@@ -99,4 +99,27 @@ export interface Profile {
   tone: string;
   signature: string;
   daily_send_cap: number;
+  /** What you sell or do — the thing being pitched. */
+  offer: string;
+  /** Who you serve: the kind of person or company worth writing to. */
+  audience: string;
+  /** One URL per line. Site, portfolio, case studies. */
+  links: string;
+  /** Standing directives. Outrank every other instruction in every prompt. */
+  instructions: string;
+}
+
+/** The memory profile as the LLM returns it, before it is merged over what
+ *  the user already wrote. Every field is optional: a short description can
+ *  only support a few of them, and inventing the rest is worse than blank. */
+export interface ProfileDraft {
+  full_name?: string;
+  headline?: string;
+  offer?: string;
+  audience?: string;
+  background?: string;
+  goal?: string;
+  tone?: string;
+  links?: string[];
+  signature?: string;
 }

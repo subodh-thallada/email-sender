@@ -4,6 +4,46 @@ Search for people in plain English, get their profile and email address, and dra
 
 Academic search is the strong path: it runs on [OpenAlex](https://openalex.org), which is free, needs no API key, and has real coverage of university researchers.
 
+## Outreach features
+
+All configured under **Settings**.
+
+**Memory profile.** Describe your business once — what you offer, who you serve,
+what you have done — and it fills in the structured fields every later draft is
+written from. It only fills blanks, never overwrites what you typed, and never
+saves without you pressing Save: these values end up in mail sent to strangers
+under your name. Filling in both *offer* and *audience* switches the writer from
+academic outreach to a client pitch.
+
+**Personalize.** Standing instructions ("never open with a question", "only
+target people in Canada", "keep it under 100 words"). They outrank the built-in
+rules everywhere — drafting, revising, and deciding who is worth writing to. The
+one thing they cannot do is authorise inventing a fact.
+
+**Bulk drafting.** Select people on a results page and draft them in one click.
+Each draft is written and saved independently, so one failure costs one person
+rather than the batch, and drafts survive a reload. The per-click ceiling and the
+concurrency are both settings — concurrency is deliberately low, since a burst of
+twenty is the fastest way to get rate-limited on every one of them.
+
+**Read receipts.** A 1×1 pixel per message, recorded on load. Off by default, and
+skipped entirely unless `APP_URL` points at a real deployed origin. Read the
+numbers loosely: Gmail proxies and caches the image, Apple Mail Privacy
+Protection loads it on delivery whether or not anyone looked, and a recipient
+with images off never registers at all. Enabling it also forces an HTML part on
+every message, which reads slightly more like bulk mail than plain text does.
+
+**Peak-time scheduling.** "Send at the next peak time" picks the next Tuesday–
+Thursday mid-morning slot and queues it, staggering a batch rather than firing it
+all at once. The window is computed in *your* timezone, because nothing in the
+pipeline establishes the recipient's — for outreach across continents, use the
+manual time picker instead.
+
+**Research depth.** Basic / deeper / deepest, controlling pages read per person,
+candidates pulled before filtering, and whether Exa runs alongside Serper. Every
+tier costs strictly more than the one below it. The `exaMaxPerSearch` cap still
+applies on top, and the lower of the two wins.
+
 ## Setup
 
 ```bash
@@ -119,6 +159,7 @@ npx tsx --env-file=.env scripts/check-academic.ts     # OpenAlex discovery on a 
 npx tsx scripts/check-deobfuscate.ts                        # 19 patterns + 3 live faculty pages
 npx tsx --env-file=.env scripts/check-waterfall.ts    # scrape → learn → infer → verify
 npx tsx --env-file=.env scripts/check-db.ts           # schema + profile round-trip
+npx tsx scripts/check-sema.ts                               # peak times, pixel, draft parsing, depth
 ```
 
 ## Deploying to Vercel

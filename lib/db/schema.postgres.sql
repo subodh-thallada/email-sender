@@ -13,6 +13,13 @@ CREATE TABLE IF NOT EXISTS profile (
   tone           TEXT NOT NULL DEFAULT 'warm-professional',
   signature      TEXT NOT NULL DEFAULT '',
   daily_send_cap INTEGER NOT NULL DEFAULT 25,
+  -- Memory profile. Filled either by hand or by lib/ai/build-profile.ts from a
+  -- freeform description, and reused by every draft from then on.
+  offer          TEXT NOT NULL DEFAULT '',   -- what you sell / do
+  audience       TEXT NOT NULL DEFAULT '',   -- who you serve
+  links          TEXT NOT NULL DEFAULT '',   -- one URL per line: site, portfolio
+  -- Persistent user directives. Outrank everything else in every prompt.
+  instructions   TEXT NOT NULL DEFAULT '',
   updated_at     TEXT NOT NULL DEFAULT (to_char(now() AT TIME ZONE 'utc', 'YYYY-MM-DD HH24:MI:SS'))
 );
 
@@ -80,9 +87,32 @@ CREATE TABLE IF NOT EXISTS sends (
   message_id  TEXT,
   status      TEXT NOT NULL,                 -- sent | error
   error       TEXT,
+  -- Read receipts. track_token addresses the pixel and is unguessable, so the
+  -- send id is never exposed in outgoing mail.
+  track_token     TEXT,
+  open_count      INTEGER NOT NULL DEFAULT 0,
+  first_opened_at TEXT,
+  last_opened_at  TEXT,
   sent_at     TEXT NOT NULL DEFAULT (to_char(now() AT TIME ZONE 'utc', 'YYYY-MM-DD HH24:MI:SS'))
 );
 CREATE INDEX IF NOT EXISTS idx_sends_day ON sends(sent_at);
+CREATE INDEX IF NOT EXISTS idx_sends_person ON sends(person_id);
+-- idx_sends_token lives in ADDED_INDEXES (lib/db/index.ts), not here: on a
+-- database predating track_token this file runs before the ALTER that adds the
+-- column, and indexing a missing column aborts the whole schema batch.
+
+-- One row per pixel load. Kept separate from the counter on sends so a
+-- reopened email shows a timeline rather than just a number.
+CREATE TABLE IF NOT EXISTS email_opens (
+  id         TEXT PRIMARY KEY,
+  send_id    TEXT NOT NULL REFERENCES sends(id) ON DELETE CASCADE,
+  opened_at  TEXT NOT NULL DEFAULT (to_char(now() AT TIME ZONE 'utc', 'YYYY-MM-DD HH24:MI:SS')),
+  user_agent TEXT,
+  -- Truncated /24 (or /48) prefix, never the full address: enough to tell a
+  -- Gmail proxy prefetch from a real reader, not enough to locate anyone.
+  ip_prefix  TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_opens_send ON email_opens(send_id, opened_at);
 
 -- Cache over every external call (OpenAlex, Serper, page fetches, LLM extraction).
 CREATE TABLE IF NOT EXISTS cache (

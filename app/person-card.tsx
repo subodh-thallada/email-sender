@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import type { EmailConfidence, PersonPayload } from "@/lib/types";
 import Tooltip from "./ui/tooltip";
 import { CopyButton, Spinner, Swap } from "./ui/bits";
@@ -27,27 +27,69 @@ function badgeLabel(e: { source: string; confidence: EmailConfidence }): string 
 
 type SendStatus = "idle" | "confirm" | "sending" | "sent" | "scheduled" | "error";
 
+/** A draft written elsewhere (bulk) and pushed into this card. */
+export interface PushedDraft {
+  subject: string;
+  body: string;
+  /** Bumped on every bulk run so a redraft with identical text still lands. */
+  nonce: number;
+}
+
+export interface OpenInfo {
+  count: number;
+  firstAt: string | null;
+}
+
 export default function PersonCard({
   person,
   index = 0,
+  initialDraft = null,
+  pushedDraft = null,
+  opens = null,
+  selected,
+  onSelect,
 }: {
   person: PersonPayload;
   /** Drives the entry stagger on server-rendered lists. */
   index?: number;
+  /** Draft already saved for this person, loaded server-side. */
+  initialDraft?: { subject: string; body: string } | null;
+  /** Draft delivered by a bulk run after mount. */
+  pushedDraft?: PushedDraft | null;
+  /** Read receipts, when this person has already been emailed. */
+  opens?: OpenInfo | null;
+  /** Selection is owned by the list so the bulk bar can count it. */
+  selected?: boolean;
+  onSelect?: (personId: string, checked: boolean) => void;
 }) {
-  const [open, setOpen] = useState(false);
+  const [open, setOpen] = useState(Boolean(initialDraft));
   const [drafting, setDrafting] = useState(false);
-  const [subject, setSubject] = useState("");
-  const [body, setBody] = useState("");
+  const [subject, setSubject] = useState(initialDraft?.subject ?? "");
+  const [body, setBody] = useState(initialDraft?.body ?? "");
   const [send, setSend] = useState<{ status: SendStatus; message?: string }>({
     status: "idle",
   });
   const [when, setWhen] = useState("");
+  const [mode, setMode] = useState<"now" | "at" | "peak">("now");
   const [instruction, setInstruction] = useState("");
   const [revising, setRevising] = useState(false);
   const [history, setHistory] = useState<
     { role: "user" | "assistant"; content: string }[]
   >([]);
+
+  // A bulk run writes into cards that are already mounted. Keyed on nonce so
+  // it fires once per run and never clobbers an edit made in between.
+  const nonce = pushedDraft?.nonce ?? 0;
+  useEffect(() => {
+    if (!pushedDraft) return;
+    setSubject(pushedDraft.subject);
+    setBody(pushedDraft.body);
+    setOpen(true);
+    setSend({ status: "idle" });
+    setHistory([]);
+    // pushedDraft is a fresh object each render; nonce is the real trigger.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [nonce]);
 
   const best = person.emails[0];
   const dossier = person.dossier;
@@ -159,14 +201,28 @@ export default function PersonCard({
           to: best.address,
           subject,
           body,
+          mode,
           // datetime-local has no zone; the browser's own offset is what the
           // user meant, so build the instant locally and send it as ISO.
-          scheduledAt: when ? new Date(when).toISOString() : undefined,
+          scheduledAt:
+            mode === "at" && when ? new Date(when).toISOString() : undefined,
+          // Peak times are computed in the sender's timezone, which only the
+          // browser knows. getTimezoneOffset is minutes *behind* UTC, so it
+          // is negated to become minutes to add.
+          tzOffsetMinutes: -new Date().getTimezoneOffset(),
         }),
       });
-      const data = (await res.json()) as { ok: boolean; error?: string; scheduled?: boolean };
+      const data = (await res.json()) as {
+        ok: boolean;
+        error?: string;
+        scheduled?: boolean;
+        when?: string | null;
+      };
       if (!res.ok || !data.ok) throw new Error(data.error ?? `HTTP ${res.status}`);
-      setSend({ status: data.scheduled ? "scheduled" : "sent" });
+      setSend({
+        status: data.scheduled ? "scheduled" : "sent",
+        message: data.when ?? undefined,
+      });
     } catch (e) {
       setSend({ status: "error", message: e instanceof Error ? e.message : String(e) });
     }
@@ -191,8 +247,34 @@ export default function PersonCard({
       }
     >
       <div className="flex items-start justify-between gap-4 p-4">
+        {onSelect && (
+          <input
+            type="checkbox"
+            checked={Boolean(selected)}
+            onChange={(e) => onSelect(person.id, e.target.checked)}
+            disabled={person.emails.length === 0}
+            aria-label={`Select ${person.name} for bulk drafting`}
+            title={
+              person.emails.length === 0
+                ? "No address found, so there is nobody to draft to"
+                : `Select ${person.name}`
+            }
+            className="mt-1 size-3.5 shrink-0 accent-[var(--color-accent)] disabled:opacity-30"
+          />
+        )}
         <div className="min-w-0 flex-1">
-          <h3 className="text-[15px] leading-snug font-medium">
+          <h3 className="flex flex-wrap items-center gap-2 text-[15px] leading-snug font-medium">
+            {opens && opens.count > 0 && (
+              <Tooltip
+                label={`Pixel loaded ${opens.count} time${opens.count === 1 ? "" : "s"}${
+                  opens.firstAt ? `, first at ${opens.firstAt} UTC` : ""
+                }. Proxies and image prefetch make this approximate.`}
+              >
+                <span className="order-last rounded-full border border-[#cfe0d8] bg-[var(--color-accent-soft)] px-1.5 py-0.5 text-[10px] text-[var(--color-accent)]">
+                  opened{opens.count > 1 ? ` ${opens.count}×` : ""}
+                </span>
+              </Tooltip>
+            )}
             {person.homepage ? (
               <a
                 href={person.homepage}
@@ -345,19 +427,22 @@ export default function PersonCard({
               <select
                 id={`when-${person.id}`}
                 className="field rounded-md border border-[var(--color-line)] px-2 py-1 text-[11px]"
-                value={when ? "later" : "now"}
-                onChange={(e) =>
+                value={mode}
+                onChange={(e) => {
+                  const next = e.target.value as "now" | "at" | "peak";
+                  setMode(next);
                   setWhen(
-                    e.target.value === "now"
-                      ? ""
-                      : localInput(new Date(Date.now() + 3600_000)),
-                  )
-                }
+                    next === "at"
+                      ? localInput(new Date(Date.now() + 3600_000))
+                      : "",
+                  );
+                }}
               >
                 <option value="now">now</option>
-                <option value="later">at a time</option>
+                <option value="peak">at the next peak time</option>
+                <option value="at">at a time</option>
               </select>
-              {when && (
+              {mode === "at" && (
                 <input
                   type="datetime-local"
                   value={when}
@@ -365,6 +450,11 @@ export default function PersonCard({
                   onChange={(e) => setWhen(e.target.value)}
                   className="field rounded-md border border-[var(--color-line)] px-2 py-1 text-[11px]"
                 />
+              )}
+              {mode === "peak" && (
+                <span className="text-[10px] text-[var(--color-faint)]">
+                  Next Tue&ndash;Thu mid-morning, your timezone
+                </span>
               )}
             </div>
 
@@ -380,11 +470,17 @@ export default function PersonCard({
               >
                 <span className="flex items-center gap-1.5">
                   {send.status === "sending" && <Spinner />}
-                  {send.status === "idle" && when
+                  {send.status === "idle" && mode !== "now"
                     ? "Schedule"
                     : label(send.status, best?.address)}
                 </span>
               </button>
+
+              {send.status === "scheduled" && send.message && (
+                <span className="text-xs text-[var(--color-muted)]">
+                  {send.message}
+                </span>
+              )}
 
               {send.status === "confirm" && (
                 <button

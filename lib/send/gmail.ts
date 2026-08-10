@@ -25,13 +25,21 @@ export interface SendInput {
   /** Markdown. Rendered to an HTML part with a plain-text alternative. */
   body: string;
   fromName?: string;
+  /**
+   * Read-receipt pixel. Its presence forces an HTML part even for a plain
+   * body — there is nowhere else to hang an image.
+   */
+  pixelUrl?: string | null;
 }
 
 /** Builds RFC-2822 bytes. MailComposer is nodemailer's MIME builder, used here
  * without any transport — it handles encoding, folding and multipart/alternative
  * correctly, which is not worth reimplementing. */
 export async function buildMime(input: SendInput): Promise<string> {
-  const formatted = hasFormatting(input.body);
+  // A plain note sent as HTML looks more like bulk mail, so the HTML part is
+  // normally opt-in on formatting. Tracking overrides that: the pixel is an
+  // image, and an image needs somewhere to live.
+  const html = hasFormatting(input.body) || Boolean(input.pixelUrl);
 
   const raw = await new MailComposer({
     from: input.fromName
@@ -39,10 +47,9 @@ export async function buildMime(input: SendInput): Promise<string> {
       : input.from,
     to: input.to,
     subject: input.subject,
-    // Always send text/plain. Add the HTML part only when the body actually
-    // uses formatting — a plain note sent as HTML looks more like bulk mail.
-    text: formatted ? markdownToPlain(input.body) : input.body,
-    ...(formatted ? { html: markdownToHtml(input.body) } : {}),
+    // Always send text/plain.
+    text: html ? markdownToPlain(input.body) : input.body,
+    ...(html ? { html: markdownToHtml(input.body, input.pixelUrl) } : {}),
     replyTo: input.from,
   })
     .compile()

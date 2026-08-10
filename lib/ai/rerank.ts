@@ -1,5 +1,7 @@
 import * as z from "zod";
 import { generateObject } from "./provider";
+import { withInstructions } from "./personalize";
+import { getProfile } from "../profile";
 import type { Candidate, ParsedQuery } from "../types";
 
 const Schema = z.object({
@@ -58,9 +60,18 @@ export async function rerank(
     JSON.stringify(compact, null, 1),
   ].join("\n");
 
+  // "only target people in Canada", "skip anyone at a company over 200 people"
+  // is targeting guidance, and this is the step that acts on it.
+  const profile = await getProfile();
+
   const out = await generateObject(
     Schema,
-    { task: "rerank", system: SYSTEM, user, maxTokens: 16000 },
+    {
+      task: "rerank",
+      system: withInstructions(SYSTEM, profile),
+      user,
+      maxTokens: 16000,
+    },
     "rerank_results",
   );
 

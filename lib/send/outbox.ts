@@ -2,6 +2,7 @@ import { all, newId, nowStamp, one, run, todayStamp } from "../db";
 import { getProfile } from "../profile";
 import { defaultAccount, NotConnectedError } from "../google/accounts";
 import { sendMail } from "./gmail";
+import { trackingFor } from "./tracking";
 
 export interface OutboxRow {
   id: string;
@@ -119,12 +120,18 @@ export async function flushDue(now = new Date()): Promise<FlushResult> {
         );
       }
 
+      // Minted here rather than at queue time: tracking may have been switched
+      // on or off in the hours between scheduling and sending, and the setting
+      // that matters is the one in force when the message actually goes out.
+      const tracking = await trackingFor();
+
       const { messageId } = await sendMail({
         from,
         to: row.to_address,
         subject: row.subject,
         body: row.body,
         fromName: profile.full_name || undefined,
+        pixelUrl: tracking?.url,
       });
 
       await run(
@@ -133,8 +140,8 @@ export async function flushDue(now = new Date()): Promise<FlushResult> {
         [messageId, nowStamp(), row.id],
       );
       await run(
-        `INSERT INTO sends (id, draft_id, person_id, to_address, subject, message_id, status, sent_at)
-         VALUES (?,?,?,?,?,?, 'sent', ?)`,
+        `INSERT INTO sends (id, draft_id, person_id, to_address, subject, message_id, status, track_token, sent_at)
+         VALUES (?,?,?,?,?,?, 'sent', ?, ?)`,
         [
           newId("snd"),
           row.id,
@@ -142,6 +149,7 @@ export async function flushDue(now = new Date()): Promise<FlushResult> {
           row.to_address,
           row.subject,
           messageId,
+          tracking?.token ?? null,
           nowStamp(),
         ],
       );

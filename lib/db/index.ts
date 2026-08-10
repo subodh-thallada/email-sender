@@ -58,6 +58,36 @@ function toPg(sql: string): string {
   return out;
 }
 
+/**
+ * Columns added after the first release. `CREATE TABLE IF NOT EXISTS` is a
+ * no-op on a database that already has the table, so every later column has to
+ * arrive as its own ALTER — listed here rather than scattered through init()
+ * so the set is auditable in one place.
+ *
+ * Each entry must be idempotent in effect: Postgres gets IF NOT EXISTS, and
+ * the SQLite path swallows the duplicate-column error.
+ */
+const ADDED_COLUMNS: [table: string, column: string, type: string][] = [
+  ["outbox", "from_email", "TEXT"],
+  ["profile", "offer", "TEXT NOT NULL DEFAULT ''"],
+  ["profile", "audience", "TEXT NOT NULL DEFAULT ''"],
+  ["profile", "links", "TEXT NOT NULL DEFAULT ''"],
+  ["profile", "instructions", "TEXT NOT NULL DEFAULT ''"],
+  ["sends", "track_token", "TEXT"],
+  ["sends", "open_count", "INTEGER NOT NULL DEFAULT 0"],
+  ["sends", "first_opened_at", "TEXT"],
+  ["sends", "last_opened_at", "TEXT"],
+];
+
+/**
+ * Indexes over columns from ADDED_COLUMNS. They cannot live in the schema
+ * files: those run first, and on an older database the column they index does
+ * not exist yet — which aborts the entire schema batch under libsql.
+ */
+const ADDED_INDEXES: string[] = [
+  "CREATE UNIQUE INDEX IF NOT EXISTS idx_sends_token ON sends(track_token)",
+];
+
 async function init(): Promise<Conn> {
   const target = url();
 
@@ -73,9 +103,12 @@ async function init(): Promise<Conn> {
       "utf8",
     );
     await sql.unsafe(schema);
-    await sql.unsafe(
-      "ALTER TABLE outbox ADD COLUMN IF NOT EXISTS from_email TEXT",
-    );
+    for (const [table, column, type] of ADDED_COLUMNS) {
+      await sql.unsafe(
+        `ALTER TABLE ${table} ADD COLUMN IF NOT EXISTS ${column} ${type}`,
+      );
+    }
+    for (const stmt of ADDED_INDEXES) await sql.unsafe(stmt);
     await sql.unsafe(
       "INSERT INTO profile (id) VALUES (1) ON CONFLICT DO NOTHING",
     );
@@ -95,12 +128,16 @@ async function init(): Promise<Conn> {
   );
   await client.executeMultiple(schema);
   // SQLite has no ADD COLUMN IF NOT EXISTS, and executeMultiple aborts the
-  // whole batch on error, so run it alone and swallow the duplicate-column case.
-  try {
-    await client.execute("ALTER TABLE outbox ADD COLUMN from_email TEXT");
-  } catch {
-    // Already there.
+  // whole batch on error, so run each alone and swallow the duplicate-column
+  // case. Anything else is a real failure and is left to surface on first query.
+  for (const [table, column, type] of ADDED_COLUMNS) {
+    try {
+      await client.execute(`ALTER TABLE ${table} ADD COLUMN ${column} ${type}`);
+    } catch {
+      // Already there.
+    }
   }
+  for (const stmt of ADDED_INDEXES) await client.execute(stmt);
   await client.execute("INSERT OR IGNORE INTO profile (id) VALUES (1)");
   return { kind: "sqlite", client };
 }

@@ -4,6 +4,8 @@ import { sendMail } from "@/lib/send/gmail";
 import { syntaxOk } from "@/lib/email/verify";
 import { enqueue } from "@/lib/send/outbox";
 import { defaultAccount, sendingConfigured } from "@/lib/google/accounts";
+import { trackingFor } from "@/lib/send/tracking";
+import { describeSlot, nextPeakSlot, readOffset } from "@/lib/send/peak";
 
 export const runtime = "nodejs";
 
@@ -12,14 +14,19 @@ function fail(error: string, status = 400) {
 }
 
 export async function POST(req: Request) {
-  const { personId, to, subject, body, scheduledAt } = (await req.json()) as {
-    personId?: string;
-    to?: string;
-    subject?: string;
-    body?: string;
-    /** ISO string. When present the message is queued instead of sent now. */
-    scheduledAt?: string;
-  };
+  const { personId, to, subject, body, scheduledAt, mode, tzOffsetMinutes } =
+    (await req.json()) as {
+      personId?: string;
+      to?: string;
+      subject?: string;
+      body?: string;
+      /** ISO string. When present the message is queued instead of sent now. */
+      scheduledAt?: string;
+      /** "peak" asks the server to choose the time. */
+      mode?: "now" | "at" | "peak";
+      /** Browser's UTC offset in minutes, for the peak-time calculation. */
+      tzOffsetMinutes?: number;
+    };
 
   if (!personId || !to || !subject?.trim() || !body?.trim()) {
     return fail("personId, to, subject and body are all required.");
@@ -61,13 +68,27 @@ export async function POST(req: Request) {
     return fail("You already emailed this person.");
   }
 
-  // Scheduled: queue it and return. The cron runner enforces the same cap.
-  if (scheduledAt) {
-    const when = new Date(scheduledAt);
+  // Peak mode has the server pick the time; "at" uses the one supplied.
+  const offset = readOffset(tzOffsetMinutes);
+  let when: Date | null = null;
+
+  if (mode === "peak") {
+    if (offset === null) {
+      return fail("Could not read your timezone, so no peak time can be picked.");
+    }
+    when = nextPeakSlot({ offsetMinutes: offset });
+  } else if (scheduledAt) {
+    when = new Date(scheduledAt);
     if (Number.isNaN(when.getTime())) return fail("Invalid scheduled time.");
     if (when.getTime() < Date.now() - 60_000) {
       return fail("That time is in the past.");
     }
+  }
+
+  // Scheduled: queue it and return. The cron runner enforces the same cap and
+  // mints the tracking token at flush time, since the body it sends is built
+  // there rather than here.
+  if (when) {
     if (!process.env.CRON_SECRET) {
       return fail(
         "Scheduling needs CRON_SECRET set and a cron job hitting /api/cron/send-due.",
@@ -87,6 +108,7 @@ export async function POST(req: Request) {
       id,
       from: account.email,
       scheduledAt: when.toISOString(),
+      when: offset === null ? null : describeSlot(when, offset),
     });
   }
 
@@ -97,6 +119,9 @@ export async function POST(req: Request) {
   );
 
   const sendId = newId("snd");
+  // Minted before the send, because the token has to be inside the message.
+  const tracking = await trackingFor();
+
   try {
     const { messageId } = await sendMail({
       from: account.email,
@@ -104,15 +129,17 @@ export async function POST(req: Request) {
       subject,
       body,
       fromName: profile.full_name || undefined,
+      pixelUrl: tracking?.url,
     });
     await run(
-      `INSERT INTO sends (id, draft_id, person_id, to_address, subject, message_id, status)
-       VALUES (?,?,?,?,?,?, 'sent')`,
-      [sendId, draftId, personId, to, subject, messageId],
+      `INSERT INTO sends (id, draft_id, person_id, to_address, subject, message_id, status, track_token)
+       VALUES (?,?,?,?,?,?, 'sent', ?)`,
+      [sendId, draftId, personId, to, subject, messageId, tracking?.token ?? null],
     );
     return Response.json({
       ok: true,
       messageId,
+      tracked: Boolean(tracking),
       sentToday: sentToday + 1,
       cap: profile.daily_send_cap,
     });

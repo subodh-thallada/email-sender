@@ -1,7 +1,10 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { all, one } from "@/lib/db";
-import PersonCard from "../../person-card";
+import { getSettings } from "@/lib/settings";
+import { openStatsFor } from "@/lib/send/tracking";
+import ResultsList from "./results-list";
+import type { OpenInfo } from "../../person-card";
 import type { Dossier, EmailConfidence, EmailSource, PersonPayload } from "@/lib/types";
 
 export const dynamic = "force-dynamic";
@@ -88,6 +91,31 @@ export default async function ResultsPage({
 
   const withEmail = people.filter((p) => p.emails.length > 0).length;
 
+  // Drafts survive a reload, so a bulk run is not lost by navigating away.
+  // One row per person — the bulk writer overwrites rather than appending.
+  const ids = rows.map((r) => r.id);
+  const draftRows = ids.length
+    ? await all<{ person_id: string; subject: string; body: string }>(
+        `SELECT person_id, subject, body FROM drafts
+         WHERE person_id IN (${ids.map(() => "?").join(",")})
+         ORDER BY updated_at`,
+        ids,
+      )
+    : [];
+  const drafts = Object.fromEntries(
+    draftRows.map((d) => [d.person_id, { subject: d.subject, body: d.body }]),
+  );
+
+  const openStats = await openStatsFor(ids);
+  const opens: Record<string, OpenInfo> = Object.fromEntries(
+    [...openStats.values()].map((s) => [
+      s.personId,
+      { count: s.openCount, firstAt: s.firstOpenedAt },
+    ]),
+  );
+
+  const { bulkDraftLimit } = await getSettings();
+
   return (
     <div className="space-y-6">
       <div className="enter">
@@ -114,13 +142,15 @@ export default async function ResultsPage({
         </p>
       )}
 
-      <div className="space-y-3">
-        {/* Everything is present at first paint here, so the cascade has to be
-            authored. Index drives a 40ms-per-item entry delay. */}
-        {people.map((p, i) => (
-          <PersonCard key={p.id} person={p} index={i} />
-        ))}
-      </div>
+      {/* Everything is present at first paint here, so the cascade has to be
+          authored. ResultsList passes each card its index for the 40ms
+          per-item entry delay. */}
+      <ResultsList
+        people={people}
+        drafts={drafts}
+        opens={opens}
+        bulkLimit={bulkDraftLimit}
+      />
     </div>
   );
 }

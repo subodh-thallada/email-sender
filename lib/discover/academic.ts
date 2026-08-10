@@ -8,6 +8,7 @@ import {
   type OpenAlexAuthor,
 } from "../sources/openalex";
 import { registrableDomain } from "../email/discover";
+import { resolveDepth } from "../settings";
 import type { Candidate, ParsedQuery } from "../types";
 
 /**
@@ -44,18 +45,24 @@ export async function discoverAcademic(
   }
 
   onStatus(`Searching OpenAlex for ${institution.display_name}…`);
-  // Over-fetch: rerank will discard stale affiliations and grad students.
+  // Over-fetch: rerank will discard stale affiliations and grad students. How
+  // far to over-fetch is the depth dial — OpenAlex is free, so a deeper tier
+  // costs only the rerank tokens spent judging the extra candidates.
+  const { candidateMultiplier } = await resolveDepth();
   const authors = await searchAuthors({
     institutionId: institution.id,
     topicIds: topics.map((t) => t.id),
-    perPage: Math.min(Math.max(intent.limit * 3, 40), 100),
+    perPage: Math.min(
+      Math.max(intent.limit * (candidateMultiplier + 1), 40),
+      100,
+    ),
   });
 
   const topicIds = new Set(topics.map((t) => shortId(t.id)));
   const ranked = authors
     .map((a) => ({ author: a, fit: topicFit(a, topicIds) }))
     .sort((x, y) => y.fit - x.fit)
-    .slice(0, Math.min(intent.limit * 2, 40));
+    .slice(0, Math.min(intent.limit * candidateMultiplier, 60));
 
   onStatus(`Pulling recent publications for ${ranked.length} researchers…`);
   const orgDomain = domainFromUrl(institution.homepage_url);

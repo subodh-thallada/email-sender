@@ -2,7 +2,7 @@ import { extractProfile } from "../ai/extract-profile";
 import { fetchPage } from "../sources/fetch-page";
 import { googleSearch, rankPersonPages } from "../sources/serper";
 import { exaSearch } from "../sources/exa";
-import { sourceEnabled } from "../settings";
+import { resolveDepth, sourceEnabled } from "../settings";
 import { hunterFind } from "../sources/hunter";
 import type { Candidate, Dossier, FoundEmail } from "../types";
 import {
@@ -14,7 +14,7 @@ import {
 import { inferAddress, learnPattern, splitName } from "./patterns";
 import { domainOf, verifyAddress } from "./verify";
 
-const MAX_PAGES = 3;
+/* Pages read per person now comes from the depth tier — see resolveDepth(). */
 
 /** Two-label eTLD+1, widened for the ccSLDs universities actually use. */
 const CC_SLDS = new Set([
@@ -48,19 +48,27 @@ export async function discoverPerson(
 ): Promise<{ dossier: Dossier; emails: FoundEmail[] }> {
   const queryOrg = candidate.org ?? "";
   const query = `"${candidate.name}" ${queryOrg} email contact`;
+  const depth = await resolveDepth();
 
-  // Serper first; Exa only if Serper is switched off or its quota is gone.
+  // Serper first; Exa when Serper is switched off, came back empty, or the
+  // deepest tier asks for both.
   let hits = (await sourceEnabled("serper"))
-    ? await googleSearch(query, 8).catch(() => [])
+    ? await googleSearch(query, depth.searchResults).catch(() => [])
     : [];
-  if (hits.length === 0) {
-    hits = await exaSearch(query, searchId, 6).catch(() => []);
+  if (hits.length === 0 || depth.exaSupplements) {
+    const extra = await exaSearch(query, searchId, depth.searchResults).catch(
+      () => [],
+    );
+    // Dedupe by URL — the two engines agree on the obvious pages, and paying
+    // to fetch the same homepage twice is the whole cost of this tier.
+    const seenLinks = new Set(hits.map((h) => h.link));
+    hits = [...hits, ...extra.filter((h) => !seenLinks.has(h.link))];
   }
 
   const pages = (
     await Promise.all(
       rankPersonPages(hits, candidate.org)
-        .slice(0, MAX_PAGES)
+        .slice(0, depth.pagesPerPerson)
         .map((h) => fetchPage(h.link)),
     )
   ).filter((p) => p.ok && p.text.length > 200);

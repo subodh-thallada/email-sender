@@ -2,6 +2,9 @@
 
 import { useState } from "react";
 import type { Provider, Task } from "@/lib/ai/models";
+// From lib/depth, not lib/settings: this is a client component, and a value
+// import from settings.ts would bundle the database driver for the browser.
+import { DEPTHS, DEPTH_LABEL } from "@/lib/depth";
 import type { Settings } from "@/lib/settings";
 import SubmitButton from "./submit-button";
 
@@ -27,12 +30,15 @@ export default function AiForm({
   providers,
   upgrades,
   defaults,
+  trackingBroken = false,
 }: {
   action: (fd: FormData) => Promise<void>;
   settings: Settings;
   providers: { id: Provider; label: string; configured: boolean }[];
   upgrades: Record<Provider, Record<Task, string[]>>;
   defaults: Record<Provider, Record<Task, string>>;
+  /** Tracking is on but APP_URL is missing or points at localhost. */
+  trackingBroken?: boolean;
 }) {
   const available = providers.filter((p) => p.configured);
   const tasks = Object.keys(TASK_LABEL) as Task[];
@@ -166,7 +172,99 @@ export default function AiForm({
             defaultValue={settings.exaMaxPerSearch}
             className={`${field} mt-1 w-28 tabular-nums`}
           />
+          <span className="mt-1 block text-[10px] text-[var(--color-faint)]">
+            A hard ceiling on top of the research depth below &mdash; whichever
+            is lower wins.
+          </span>
         </label>
+      </section>
+
+      <section>
+        <h2 className="text-[11px] font-semibold tracking-widest text-[var(--color-faint)] uppercase">
+          Research depth
+        </h2>
+        <p className="mt-1.5 text-[11px] text-[var(--color-muted)]">
+          How much is read about each person before writing. Deeper means better
+          hooks to open with, and strictly more time and credits per search.
+        </p>
+
+        <div className="mt-3 space-y-2">
+          {DEPTHS.map((d) => (
+            <label
+              key={d}
+              className="pressable pressable-subtle flex cursor-pointer items-start gap-3 rounded-lg border border-[var(--color-line)] bg-[var(--color-surface)] px-4 py-3 hover:bg-[var(--color-paper)]"
+            >
+              <input
+                type="radio"
+                name="depth"
+                value={d}
+                defaultChecked={settings.depth === d}
+                className="mt-0.5 size-3.5 accent-[var(--color-accent)]"
+              />
+              <span className="text-[12px]">{DEPTH_LABEL[d]}</span>
+            </label>
+          ))}
+        </div>
+      </section>
+
+      <section>
+        <h2 className="text-[11px] font-semibold tracking-widest text-[var(--color-faint)] uppercase">
+          Outreach
+        </h2>
+
+        <div className="mt-3 grid gap-4 sm:grid-cols-2">
+          <label className="block text-[11px]">
+            <span className="text-[var(--color-muted)]">Bulk draft limit</span>
+            <input
+              type="number"
+              name="bulk_limit"
+              min={1}
+              max={50}
+              defaultValue={settings.bulkDraftLimit}
+              className={`${field} mt-1 tabular-nums`}
+            />
+            <span className="mt-1 block text-[10px] text-[var(--color-faint)]">
+              Most emails one click may write. Each one is a paid generation.
+            </span>
+          </label>
+
+          <label className="block text-[11px]">
+            <span className="text-[var(--color-muted)]">Bulk concurrency</span>
+            <input
+              type="number"
+              name="bulk_concurrency"
+              min={1}
+              max={8}
+              defaultValue={settings.bulkDraftConcurrency}
+              className={`${field} mt-1 tabular-nums`}
+            />
+            <span className="mt-1 block text-[10px] text-[var(--color-faint)]">
+              How many run at once. Raising this is the quickest route to a 429.
+            </span>
+          </label>
+        </div>
+
+        <div className="mt-3 overflow-hidden rounded-lg border border-[var(--color-line)] bg-[var(--color-surface)]">
+          <Toggle
+            name="track_opens"
+            label="Read receipts"
+            note="Adds a 1×1 pixel to outgoing mail and records when it loads. Forces an HTML part on every message, which reads slightly more like bulk mail than plain text does."
+            defaultChecked={settings.trackOpens}
+          />
+        </div>
+
+        {trackingBroken && (
+          <p className="mt-2 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-[11px] text-amber-900">
+            Read receipts are on, but <code>APP_URL</code> is unset or points at
+            localhost, so no pixel is being added. Set it to your deployed URL.
+          </p>
+        )}
+
+        <p className="mt-2 text-[10px] leading-relaxed text-[var(--color-faint)]">
+          An open is weak evidence. Gmail proxies and caches the image, Apple
+          Mail Privacy Protection loads it on delivery whether or not anyone
+          looked, and anyone with images off never registers at all.
+        </p>
       </section>
 
       <SubmitButton label="Save configuration" />
