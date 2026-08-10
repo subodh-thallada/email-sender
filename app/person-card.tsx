@@ -19,6 +19,12 @@ const CONFIDENCE_LABEL: Record<EmailConfidence, string> = {
   unknown: "unverified",
 };
 
+/** An address you supplied yourself deserves its own label, not "on page". */
+function badgeLabel(e: { source: string; confidence: EmailConfidence }): string {
+  if (e.source === "provided") return "you supplied";
+  return CONFIDENCE_LABEL[e.confidence];
+}
+
 type SendStatus = "idle" | "confirm" | "sending" | "sent" | "error";
 
 export default function PersonCard({
@@ -164,7 +170,7 @@ export default function PersonCard({
                     <span
                       className={`rounded border px-1.5 py-0.5 text-[10px] whitespace-nowrap ${CONFIDENCE_STYLE[e.confidence]}`}
                     >
-                      {CONFIDENCE_LABEL[e.confidence]}
+                      {badgeLabel(e)}
                     </span>
                   </Tooltip>
                 </div>

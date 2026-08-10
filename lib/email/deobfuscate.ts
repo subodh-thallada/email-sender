@@ -46,10 +46,16 @@ const STUB_DOMAINS = [
 const ASSET_TAIL =
   /\.(png|jpe?g|gif|svg|webp|css|js|mjs|json|woff2?|ttf|eot|ico|pdf|zip|mp4|webm)$/i;
 
-export function isStub(address: string): boolean {
+/**
+ * `trustLocal` skips the placeholder-local-part check. Those names exist to
+ * defend against scraped documentation templates; when the user types an
+ * address themselves, a real contact genuinely called Jane Doe must not be
+ * silently discarded.
+ */
+export function isStub(address: string, trustLocal = false): boolean {
   const [local, domain] = address.toLowerCase().split("@");
   if (!local || !domain) return true;
-  if (STUB_LOCALS.has(local)) return true;
+  if (!trustLocal && STUB_LOCALS.has(local)) return true;
   if (STUB_DOMAINS.some((d) => domain === d || domain.endsWith(`.${d}`))) return true;
   if (ASSET_TAIL.test(address)) return true;
   // "2x@3x" style image descriptors, version strings, hashes.
@@ -140,6 +146,22 @@ export function extractEmails(
   for (const h of collect(unmask(decodedText), "deobfuscated", sourceUrl)) add(h);
 
   return [...seen.values()];
+}
+
+/**
+ * Addresses typed by the user. Same de-obfuscation, but placeholder-looking
+ * local parts are kept — see isStub's `trustLocal`.
+ */
+export function extractEmailsTrusted(text: string): string[] {
+  const decoded = decodeEntities(text);
+  const out = new Set<string>();
+  for (const source of [decoded, unmask(decoded)]) {
+    for (const m of source.matchAll(ADDR)) {
+      const address = m[0].replace(/[.,;:)\]}>'"]+$/, "").toLowerCase();
+      if (!isStub(address, true)) out.add(address);
+    }
+  }
+  return [...out];
 }
 
 /**

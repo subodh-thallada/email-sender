@@ -1,4 +1,4 @@
-import { one, run } from "./db";
+import { nowStamp, one, run } from "./db";
 import type { Profile } from "./types";
 
 const EMPTY: Profile = {
@@ -24,7 +24,7 @@ export async function saveProfile(p: Partial<Profile>): Promise<void> {
   const next = { ...current, ...p };
   await run(
     `UPDATE profile SET full_name = ?, headline = ?, background = ?, goal = ?,
-       tone = ?, signature = ?, daily_send_cap = ?, updated_at = datetime('now')
+       tone = ?, signature = ?, daily_send_cap = ?, updated_at = ?
      WHERE id = 1`,
     [
       next.full_name,
@@ -34,6 +34,7 @@ export async function saveProfile(p: Partial<Profile>): Promise<void> {
       next.tone,
       next.signature,
       next.daily_send_cap,
+      nowStamp(),
     ],
   );
 }

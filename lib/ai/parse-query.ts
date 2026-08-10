@@ -1,7 +1,6 @@
 import * as z from "zod";
-import { zodOutputFormat } from "@anthropic-ai/sdk/helpers/zod";
-import { anthropic } from "./client";
-import { MODELS } from "./models";
+import { generateObject } from "./provider";
+import { modelFor } from "./models";
 import { cached, DAY } from "../cache";
 import type { ParsedQuery } from "../types";
 
@@ -44,25 +43,16 @@ Rules:
 - limit defaults to 20 unless the user asks for a specific number.`;
 
 export async function parseQuery(query: string): Promise<ParsedQuery> {
-  return cached<ParsedQuery>(`parse:${MODELS.PARSE}:${query}`, 30 * DAY, async () => {
-    const res = await anthropic().messages.parse({
-      model: MODELS.PARSE,
-      max_tokens: 4000,
-      system: SYSTEM,
-      output_config: {
-        effort: "low",
-        format: zodOutputFormat(Schema),
-      },
-      messages: [{ role: "user", content: query }],
-    });
-
-    const parsed = res.parsed_output;
+  const key = `parse:${modelFor("parse")}:${query}`;
+  return cached<ParsedQuery>(key, 30 * DAY, async () => {
+    const parsed = await generateObject(
+      Schema,
+      { task: "parse", system: SYSTEM, user: query, maxTokens: 4000 },
+      "search_intent",
+    );
     if (!parsed) {
       throw new Error("Could not understand that query — try rephrasing it.");
     }
-    return {
-      ...parsed,
-      limit: Math.min(Math.max(parsed.limit || 20, 1), 50),
-    };
+    return { ...parsed, limit: Math.min(Math.max(parsed.limit || 20, 1), 50) };
   });
 }

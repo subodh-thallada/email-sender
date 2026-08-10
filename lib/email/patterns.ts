@@ -1,4 +1,4 @@
-import { one, run } from "../db";
+import { nowStamp, one, run } from "../db";
 
 /**
  * Learn a domain's address format from addresses we already found, then apply
@@ -96,13 +96,13 @@ export async function learnPattern(
   const found = detectPattern(fullName, address);
   if (!found) return;
   await run(
-    `INSERT INTO domain_patterns (domain, pattern, samples) VALUES (?, ?, 1)
+    `INSERT INTO domain_patterns (domain, pattern, samples, updated_at) VALUES (?, ?, 1, ?)
      ON CONFLICT(domain) DO UPDATE SET
        samples = CASE WHEN domain_patterns.pattern = excluded.pattern
                       THEN domain_patterns.samples + 1 ELSE 1 END,
        pattern = excluded.pattern,
-       updated_at = datetime('now')`,
-    [found.domain, found.pattern],
+       updated_at = ?`,
+    [found.domain, found.pattern, nowStamp(), nowStamp()],
   );
 }
 

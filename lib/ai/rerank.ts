@@ -1,7 +1,5 @@
 import * as z from "zod";
-import { zodOutputFormat } from "@anthropic-ai/sdk/helpers/zod";
-import { anthropic } from "./client";
-import { MODELS } from "./models";
+import { generateObject } from "./provider";
 import type { Candidate, ParsedQuery } from "../types";
 
 const Schema = z.object({
@@ -48,32 +46,25 @@ export async function rerank(
     recentPaperYears: c.recentPapers.map((p) => p.year).filter(Boolean),
   }));
 
-  const res = await anthropic().messages.parse({
-    model: MODELS.RERANK,
-    max_tokens: 16000,
-    system: SYSTEM,
-    output_config: { format: zodOutputFormat(Schema) },
-    messages: [
-      {
-        role: "user",
-        content: [
-          `User asked for: ${JSON.stringify({
-            institutions: intent.institutions,
-            topics: intent.topics,
-            titles: intent.titles,
-            location: intent.location,
-          })}`,
-          "",
-          "Candidates:",
-          JSON.stringify(compact, null, 1),
-        ].join("\n"),
-      },
-    ],
-  });
+  const user = [
+    `User asked for: ${JSON.stringify({
+      institutions: intent.institutions,
+      topics: intent.topics,
+      titles: intent.titles,
+      location: intent.location,
+    })}`,
+    "",
+    "Candidates:",
+    JSON.stringify(compact, null, 1),
+  ].join("\n");
 
-  const verdicts = new Map(
-    (res.parsed_output?.results ?? []).map((r) => [r.id, r]),
+  const out = await generateObject(
+    Schema,
+    { task: "rerank", system: SYSTEM, user, maxTokens: 16000 },
+    "rerank_results",
   );
+
+  const verdicts = new Map((out?.results ?? []).map((r) => [r.id, r]));
 
   return candidates
     .map((c) => {

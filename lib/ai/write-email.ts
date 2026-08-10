@@ -1,5 +1,4 @@
-import { anthropic } from "./client";
-import { MODELS } from "./models";
+import { streamText } from "./provider";
 import type { Dossier, Profile } from "../types";
 
 const SYSTEM = `You write one cold email from a student or early-career researcher to a specific academic. Output plain text in exactly this shape:
@@ -68,41 +67,16 @@ export function buildPrompt(
     .join("\n");
 }
 
-/** Streams "Subject: ...\n\n<body>" as plain text chunks. */
+/** Streams the raw `Subject: ...` line followed by a blank line and the body. */
 export function streamEmail(
   profile: Profile,
   person: { name: string; title: string | null; org: string | null },
   dossier: Dossier | null,
 ): ReadableStream<Uint8Array> {
-  const encoder = new TextEncoder();
-
-  return new ReadableStream({
-    async start(controller) {
-      try {
-        const stream = anthropic().messages.stream({
-          model: MODELS.WRITE,
-          max_tokens: 16000,
-          system: SYSTEM,
-          output_config: { effort: "medium" },
-          messages: [
-            { role: "user", content: buildPrompt(profile, person, dossier) },
-          ],
-        });
-
-        stream.on("text", (delta) => {
-          controller.enqueue(encoder.encode(delta));
-        });
-
-        await stream.finalMessage();
-      } catch (err) {
-        controller.enqueue(
-          encoder.encode(
-            `\n\n[generation failed: ${err instanceof Error ? err.message : String(err)}]`,
-          ),
-        );
-      } finally {
-        controller.close();
-      }
-    },
+  return streamText({
+    task: "write",
+    system: SYSTEM,
+    user: buildPrompt(profile, person, dossier),
+    maxTokens: 16000,
   });
 }

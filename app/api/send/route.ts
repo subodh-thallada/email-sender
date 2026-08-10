@@ -1,4 +1,4 @@
-import { newId, one, run } from "@/lib/db";
+import { newId, one, run, todayStamp } from "@/lib/db";
 import { getProfile } from "@/lib/profile";
 import { gmailConfigured, sendMail } from "@/lib/send/gmail";
 import { syntaxOk } from "@/lib/email/verify";
@@ -33,7 +33,8 @@ export async function POST(req: Request) {
   // ~25-50 damages deliverability, so the cap is enforced here, not advisory.
   const today = await one<{ n: number }>(
     `SELECT COUNT(*) AS n FROM sends
-     WHERE status = 'sent' AND date(sent_at) = date('now')`,
+     WHERE status = 'sent' AND substr(sent_at, 1, 10) = ?`,
+    [todayStamp()],
   );
   const sentToday = Number(today?.n ?? 0);
   if (sentToday >= profile.daily_send_cap) {

@@ -186,7 +186,7 @@ export async function discoverPerson(
 
 const CONFIDENCE_RANK = { verified: 3, high: 2, inferred: 1, unknown: 0 };
 const SOURCE_RANK = {
-  llm: 6, mailto: 5, deobfuscated: 4, regex: 3, hunter: 2, pattern: 1,
+  provided: 7, llm: 6, mailto: 5, deobfuscated: 4, regex: 3, hunter: 2, pattern: 1,
 };
 
 function rank(e: FoundEmail): number {

@@ -2,6 +2,7 @@ export type Route = "academic" | "corporate" | "alumni";
 
 export type EmailConfidence = "verified" | "high" | "inferred" | "unknown";
 export type EmailSource =
+  | "provided"
   | "mailto"
   | "regex"
   | "deobfuscated"

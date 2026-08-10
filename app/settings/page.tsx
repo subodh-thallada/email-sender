@@ -1,5 +1,7 @@
 import { revalidatePath } from "next/cache";
 import { getProfile, saveProfile } from "@/lib/profile";
+import { providerStatus } from "@/lib/ai/provider";
+import { dialect } from "@/lib/db";
 import SubmitButton from "./submit-button";
 
 export const dynamic = "force-dynamic";
@@ -30,10 +32,11 @@ export default async function SettingsPage() {
   const gmailReady = Boolean(
     process.env.GMAIL_USER && process.env.GMAIL_APP_PASSWORD,
   );
+  const ai = providerStatus();
   const keys: [string, string | undefined, boolean][] = [
-    ["ANTHROPIC_API_KEY", process.env.ANTHROPIC_API_KEY, true],
-    ["SERPER_API_KEY", process.env.SERPER_API_KEY, true],
-    ["EXA_API_KEY", process.env.EXA_API_KEY, false],
+    ["ANTHROPIC_API_KEY", process.env.ANTHROPIC_API_KEY, false],
+    ["OPENAI_API_KEY", process.env.OPENAI_API_KEY, false],
+    ["SERPER_API_KEY", process.env.SERPER_API_KEY, false],
     ["HUNTER_API_KEY", process.env.HUNTER_API_KEY, false],
     ["GMAIL_USER + GMAIL_APP_PASSWORD", gmailReady ? "set" : undefined, false],
   ];
@@ -75,11 +78,39 @@ export default async function SettingsPage() {
             </li>
           ))}
         </ul>
+        <div className="mt-3 space-y-1.5 rounded-lg border border-[var(--color-line)] bg-[var(--color-surface)] px-4 py-3 text-[11px]">
+          <div className="flex justify-between gap-4">
+            <span className="text-[var(--color-faint)]">LLM provider</span>
+            <span>
+              {ai.active ? (
+                <>
+                  <strong>{ai.active}</strong>
+                  <span className="text-[var(--color-faint)]">
+                    {" "}
+                    &middot; {ai.model?.write} &middot; extraction{" "}
+                    {ai.model?.extract}
+                  </span>
+                </>
+              ) : (
+                <span className="text-red-600">
+                  none — set ANTHROPIC_API_KEY or OPENAI_API_KEY
+                </span>
+              )}
+            </span>
+          </div>
+          <div className="flex justify-between gap-4">
+            <span className="text-[var(--color-faint)]">Database</span>
+            <span>{dialect() === "postgres" ? "Postgres / Supabase" : "SQLite (local file)"}</span>
+          </div>
+        </div>
+
         <p className={hint}>
-          Set these in <code>.env.local</code> and restart the dev server. The
-          Gmail value is a 16-character App Password, not your account password
-          &mdash; Google Account &rarr; Security &rarr; 2-Step Verification
-          &rarr; App passwords.
+          Set these in <code>.env.local</code> and restart the dev server. Only
+          one LLM key is needed &mdash; set <code>AI_PROVIDER</code> to pick when
+          both are present. <code>SERPER_API_KEY</code> is only used when a query
+          has no address in it. The Gmail value is a 16-character App Password,
+          not your account password &mdash; Google Account &rarr; Security &rarr;
+          2-Step Verification &rarr; App passwords.
         </p>
       </section>
 

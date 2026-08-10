@@ -1,7 +1,6 @@
 import * as z from "zod";
-import { zodOutputFormat } from "@anthropic-ai/sdk/helpers/zod";
-import { anthropic } from "./client";
-import { MODELS } from "./models";
+import { generateObject } from "./provider";
+import { modelFor } from "./models";
 import { cached, DAY } from "../cache";
 
 const Schema = z.object({
@@ -69,21 +68,18 @@ export async function extractProfile(
     .join("\n\n")
     .slice(0, 45_000);
 
-  const cacheKey = `extract:${MODELS.EXTRACT}:${name}:${pages.map((p) => p.url).join("|")}`;
+  const cacheKey = `extract:${modelFor("extract")}:${name}:${pages.map((p) => p.url).join("|")}`;
 
   return cached<ExtractedProfile | null>(cacheKey, 14 * DAY, async () => {
-    const res = await anthropic().messages.parse({
-      model: MODELS.EXTRACT,
-      max_tokens: 8000,
-      system: SYSTEM,
-      output_config: { effort: "low", format: zodOutputFormat(Schema) },
-      messages: [
-        {
-          role: "user",
-          content: `Person: ${name}${org ? `\nExpected affiliation: ${org}` : ""}\n\n${corpus}`,
-        },
-      ],
-    });
-    return res.parsed_output ?? null;
+    return generateObject(
+      Schema,
+      {
+        task: "extract",
+        system: SYSTEM,
+        user: `Person: ${name}${org ? `\nExpected affiliation: ${org}` : ""}\n\n${corpus}`,
+        maxTokens: 8000,
+      },
+      "person_profile",
+    );
   });
 }
