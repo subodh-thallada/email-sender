@@ -74,6 +74,9 @@ async function init(): Promise<Conn> {
     );
     await sql.unsafe(schema);
     await sql.unsafe(
+      "ALTER TABLE outbox ADD COLUMN IF NOT EXISTS from_email TEXT",
+    );
+    await sql.unsafe(
       "INSERT INTO profile (id) VALUES (1) ON CONFLICT DO NOTHING",
     );
     return { kind: "postgres", sql };
@@ -91,6 +94,13 @@ async function init(): Promise<Conn> {
     "utf8",
   );
   await client.executeMultiple(schema);
+  // SQLite has no ADD COLUMN IF NOT EXISTS, and executeMultiple aborts the
+  // whole batch on error, so run it alone and swallow the duplicate-column case.
+  try {
+    await client.execute("ALTER TABLE outbox ADD COLUMN from_email TEXT");
+  } catch {
+    // Already there.
+  }
   await client.execute("INSERT OR IGNORE INTO profile (id) VALUES (1)");
   return { kind: "sqlite", client };
 }

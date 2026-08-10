@@ -1,8 +1,9 @@
 import { newId, one, run, todayStamp } from "@/lib/db";
 import { getProfile } from "@/lib/profile";
-import { gmailConfigured, sendMail } from "@/lib/send/gmail";
+import { sendMail } from "@/lib/send/gmail";
 import { syntaxOk } from "@/lib/email/verify";
 import { enqueue } from "@/lib/send/outbox";
+import { defaultAccount, sendingConfigured } from "@/lib/google/accounts";
 
 export const runtime = "nodejs";
 
@@ -24,10 +25,15 @@ export async function POST(req: Request) {
     return fail("personId, to, subject and body are all required.");
   }
   if (!syntaxOk(to)) return fail(`"${to}" is not a valid address.`);
-  if (!gmailConfigured()) {
+  if (!sendingConfigured()) {
     return fail(
-      "Gmail is not configured. Set GMAIL_USER and GMAIL_APP_PASSWORD in .env.local.",
+      "Sending is not set up. Set GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET and TOKEN_ENCRYPTION_KEY.",
     );
+  }
+
+  const account = await defaultAccount();
+  if (!account) {
+    return fail("No Gmail account is connected. Connect one in Settings.");
   }
 
   const profile = await getProfile();
@@ -67,8 +73,21 @@ export async function POST(req: Request) {
         "Scheduling needs CRON_SECRET set and a cron job hitting /api/cron/send-due.",
       );
     }
-    const id = await enqueue({ personId, to, subject, body, scheduledAt: when });
-    return Response.json({ ok: true, scheduled: true, id, scheduledAt: when.toISOString() });
+    const id = await enqueue({
+      personId,
+      from: account.email,
+      to,
+      subject,
+      body,
+      scheduledAt: when,
+    });
+    return Response.json({
+      ok: true,
+      scheduled: true,
+      id,
+      from: account.email,
+      scheduledAt: when.toISOString(),
+    });
   }
 
   const draftId = newId("d");
@@ -80,6 +99,7 @@ export async function POST(req: Request) {
   const sendId = newId("snd");
   try {
     const { messageId } = await sendMail({
+      from: account.email,
       to,
       subject,
       body,

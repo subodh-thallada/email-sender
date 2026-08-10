@@ -23,12 +23,40 @@ Open http://localhost:3000.
 | `SERPER_API_KEY` | Finding faculty pages. **Unused when your query already has an address** | 2,500/month free — [serper.dev](https://serper.dev) |
 | `OPENALEX_MAILTO` | Politeness header for OpenAlex | Free, no signup |
 | `HUNTER_API_KEY` | Last-resort email lookup | 50/month free — optional |
-| `GMAIL_USER` / `GMAIL_APP_PASSWORD` | Sending | Free — needed only to send |
+| `GOOGLE_CLIENT_ID` / `GOOGLE_CLIENT_SECRET` | Sending — you connect Gmail from Settings | Free |
+| `TOKEN_ENCRYPTION_KEY` | Encrypts stored Google refresh tokens | Free |
 | `DATABASE_URL` | SQLite file locally, Postgres/Supabase when deployed | Free tiers |
 
 Exa is not used anywhere and needs no key.
 
-**Gmail App Password**, not your account password. Turn on 2-Step Verification, then Google Account → Security → 2-Step Verification → App passwords. (OAuth is deliberately avoided: `gmail.send` is a restricted scope whose refresh tokens expire every 7 days outside a verified production app.)
+### Connecting Gmail
+
+No password is stored anywhere. At [console.cloud.google.com](https://console.cloud.google.com):
+
+1. **APIs & Services → Library** → enable **Gmail API**.
+2. **OAuth consent screen** → External.
+3. **Credentials → Create OAuth client ID → Web application**, with these authorized redirect URIs:
+   - `http://localhost:3000/api/google/callback`
+   - `https://<your-domain>/api/google/callback`
+
+Then generate the encryption key and connect from **Settings → Sending**:
+
+```bash
+node -e "console.log(require('crypto').randomBytes(32).toString('base64'))"
+```
+
+The only scope requested is `gmail.send` — this app can send as you and cannot
+read your mailbox. Revoke it from Settings or at
+[myaccount.google.com/permissions](https://myaccount.google.com/permissions).
+
+**Set the publishing status to "In production", not "Testing".** While an OAuth
+consent screen sits in Testing, Google expires every refresh token after 7 days,
+so sending would silently break each week and need reconnecting. Publishing
+without verification is fine — you get the "Google hasn't verified this app"
+interstitial (Advanced → Go to … ) and a 100-user ceiling. `gmail.send` is a
+*sensitive* scope, so lifting that ceiling needs Google's app verification but
+not the third-party security assessment that *restricted* scopes like
+`gmail.readonly` require.
 
 Fill in your profile on **Settings** before drafting — the writer uses your background to make emails specific, and refuses to draft without it.
 
@@ -109,7 +137,7 @@ Locally that is fine: only you can reach `localhost`.
 Note these are two separate things:
 
 - **Logging into this app** — none today. Supabase Auth email+password works fine and needs no Google setup. Google OAuth is optional polish, not a requirement.
-- **Sending as you** — already handled by the Gmail App Password, and unaffected by whichever login you pick.
+- **Sending as you** — the Google OAuth grant above, independent of whichever login you pick. Nothing is sent until an account is connected in Settings.
 
 ## Limits
 

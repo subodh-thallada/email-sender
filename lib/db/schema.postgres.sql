@@ -107,10 +107,24 @@ CREATE TABLE IF NOT EXISTS app_settings (
   updated_at  TEXT NOT NULL DEFAULT (to_char(now() AT TIME ZONE 'utc', 'YYYY-MM-DD HH24:MI:SS'))
 );
 
+-- Google accounts that have granted gmail.send, keyed by the address mail is
+-- sent from. refresh_token is AES-256-GCM ciphertext, never plaintext: a leaked
+-- backup would otherwise let the reader send mail as the user indefinitely.
+CREATE TABLE IF NOT EXISTS google_accounts (
+  email         TEXT PRIMARY KEY,
+  name          TEXT,
+  picture       TEXT,
+  refresh_token TEXT NOT NULL,
+  scope         TEXT NOT NULL DEFAULT '',
+  connected_at  TEXT NOT NULL DEFAULT (to_char(now() AT TIME ZONE 'utc', 'YYYY-MM-DD HH24:MI:SS')),
+  updated_at    TEXT NOT NULL DEFAULT (to_char(now() AT TIME ZONE 'utc', 'YYYY-MM-DD HH24:MI:SS'))
+);
+
 -- Queued / scheduled sends. A row here is a promise to send later.
 CREATE TABLE IF NOT EXISTS outbox (
   id            TEXT PRIMARY KEY,
   person_id     TEXT,
+  from_email    TEXT,                        -- google_accounts.email at queue time
   to_address    TEXT NOT NULL,
   subject       TEXT NOT NULL,
   body          TEXT NOT NULL,
