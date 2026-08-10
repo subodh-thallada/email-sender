@@ -28,6 +28,7 @@ export default async function RootLayout({
             </Link>
             <nav className="-mr-2 flex items-center gap-1">
               <NavLink href="/">Search</NavLink>
+              <NavLink href="/dashboard">Outreach</NavLink>
               <NavLink href="/templates">Templates</NavLink>
               <NavLink href="/settings">Settings</NavLink>
               {user && (

@@ -1,6 +1,7 @@
 import { all, newId, nowStamp, one, run, todayStamp } from "../db";
 import { getProfile } from "../profile";
 import { defaultAccount, NotConnectedError } from "../google/accounts";
+import { attachGmailThread, recordOutgoing } from "../threads/store";
 import { sendMail } from "./gmail";
 import { trackingFor } from "./tracking";
 
@@ -18,6 +19,13 @@ export interface OutboxRow {
   attempts: number;
   error: string | null;
   sent_at: string | null;
+  /** Conversation this belongs to, in this app's own ids. */
+  thread_id: string | null;
+  /** Gmail's conversation id, when the thread already has one. */
+  gmail_thread_id: string | null;
+  in_reply_to: string | null;
+  refs: string | null;
+  kind: "initial" | "followup" | null;
 }
 
 /** UTC 'YYYY-MM-DD HH:MM:SS', matching the schema's TEXT columns. */
@@ -34,11 +42,18 @@ export async function enqueue(input: {
   subject: string;
   body: string;
   scheduledAt: Date;
+  threadId?: string | null;
+  /** Gmail conversation to append to, for a scheduled follow-up. */
+  gmailThreadId?: string | null;
+  inReplyTo?: string | null;
+  references?: string | null;
+  kind?: "initial" | "followup";
 }): Promise<string> {
   const id = newId("out");
   await run(
-    `INSERT INTO outbox (id, person_id, from_email, to_address, subject, body, scheduled_at, created_at)
-     VALUES (?,?,?,?,?,?,?,?)`,
+    `INSERT INTO outbox (id, person_id, from_email, to_address, subject, body,
+       scheduled_at, created_at, thread_id, gmail_thread_id, in_reply_to, refs, kind)
+     VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)`,
     [
       id,
       input.personId ?? null,
@@ -48,6 +63,11 @@ export async function enqueue(input: {
       input.body,
       toStamp(input.scheduledAt),
       nowStamp(),
+      input.threadId ?? null,
+      input.gmailThreadId ?? null,
+      input.inReplyTo ?? null,
+      input.references ?? null,
+      input.kind ?? "initial",
     ],
   );
   return id;
@@ -125,34 +145,58 @@ export async function flushDue(now = new Date()): Promise<FlushResult> {
       // that matters is the one in force when the message actually goes out.
       const tracking = await trackingFor();
 
-      const { messageId } = await sendMail({
+      const { messageId, threadId } = await sendMail({
         from,
         to: row.to_address,
         subject: row.subject,
         body: row.body,
         fromName: profile.full_name || undefined,
         pixelUrl: tracking?.url,
+        threadId: row.gmail_thread_id,
+        inReplyTo: row.in_reply_to,
+        references: row.refs,
       });
 
+      const at = nowStamp();
       await run(
         `UPDATE outbox SET status = 'sent', message_id = ?, sent_at = ?,
            attempts = attempts + 1 WHERE id = ?`,
-        [messageId, nowStamp(), row.id],
+        [messageId, at, row.id],
       );
       await run(
-        `INSERT INTO sends (id, draft_id, person_id, to_address, subject, message_id, status, track_token, sent_at)
-         VALUES (?,?,?,?,?,?, 'sent', ?, ?)`,
+        `INSERT INTO sends (id, draft_id, person_id, to_address, subject, message_id,
+           status, track_token, sent_at, thread_id, gmail_thread_id, kind)
+         VALUES (?,?,?,?,?,?, 'sent', ?,?,?,?,?)`,
         [
           newId("snd"),
-          row.id,
+          // No draft row exists for a queued message — the body it was sent
+          // with lives on the outbox row itself, which is kept.
+          null,
           row.person_id ?? "",
           row.to_address,
           row.subject,
           messageId,
           tracking?.token ?? null,
-          nowStamp(),
+          at,
+          row.thread_id,
+          threadId,
+          row.kind ?? "initial",
         ],
       );
+
+      if (row.thread_id) {
+        if (threadId) await attachGmailThread(row.thread_id, threadId);
+        await recordOutgoing({
+          threadId: row.thread_id,
+          gmailId: messageId,
+          fromAddress: from,
+          toAddress: row.to_address,
+          subject: row.subject,
+          body: row.body,
+          sentAt: at,
+        });
+      }
+
       count += 1;
       result.sent += 1;
     } catch (err) {

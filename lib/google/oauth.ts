@@ -23,12 +23,24 @@ const REVOKE_ENDPOINT = "https://oauth2.googleapis.com/revoke";
  * the mailbox. It is "sensitive" rather than "restricted", which means app
  * verification but no third-party security assessment.
  */
-export const SCOPES = [
-  "https://www.googleapis.com/auth/gmail.send",
-  "openid",
-  "email",
-  "profile",
-] as const;
+export const SEND_SCOPE = "https://www.googleapis.com/auth/gmail.send";
+
+/**
+ * Reading replies needs more than gmail.send can give. gmail.readonly is a
+ * "restricted" scope: fine while the OAuth app is in Testing mode with the
+ * owner as a test user, but publishing it would require a third-party security
+ * assessment. It is requested but never required — Google's consent screen lets
+ * a user untick it, and everything except the reply timeline still works
+ * without it, so the grant is treated as optional throughout.
+ */
+export const READ_SCOPE = "https://www.googleapis.com/auth/gmail.readonly";
+
+export const SCOPES = [SEND_SCOPE, READ_SCOPE, "openid", "email", "profile"] as const;
+
+/** Whether a stored scope string carries permission to read the mailbox. */
+export function grantsRead(scope: string | null | undefined): boolean {
+  return Boolean(scope?.includes("gmail.readonly"));
+}
 
 export function oauthConfigured(): boolean {
   return Boolean(

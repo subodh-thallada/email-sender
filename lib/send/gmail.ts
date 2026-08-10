@@ -30,6 +30,17 @@ export interface SendInput {
    * body — there is nowhere else to hang an image.
    */
   pixelUrl?: string | null;
+  /**
+   * Gmail conversation to append to. Set on follow-ups so the message lands
+   * inside the original thread rather than starting a new one. Gmail only
+   * honours it when the subject also matches the thread's, which is why
+   * follow-up subjects are built as "Re: <original>".
+   */
+  threadId?: string | null;
+  /** RFC-2822 Message-ID of the message being replied to. */
+  inReplyTo?: string | null;
+  /** Full References chain, oldest first, space separated. */
+  references?: string | null;
 }
 
 /** Builds RFC-2822 bytes. MailComposer is nodemailer's MIME builder, used here
@@ -51,6 +62,10 @@ export async function buildMime(input: SendInput): Promise<string> {
     text: html ? markdownToPlain(input.body) : input.body,
     ...(html ? { html: markdownToHtml(input.body, input.pixelUrl) } : {}),
     replyTo: input.from,
+    // Threading headers. Gmail's own threadId groups the copy in *our* mailbox;
+    // these are what make the recipient's client group it too.
+    ...(input.inReplyTo ? { inReplyTo: input.inReplyTo } : {}),
+    ...(input.references ? { references: input.references } : {}),
   })
     .compile()
     .build();
@@ -60,7 +75,7 @@ export async function buildMime(input: SendInput): Promise<string> {
 
 export async function sendMail(
   input: SendInput,
-): Promise<{ messageId: string }> {
+): Promise<{ messageId: string; threadId: string | null }> {
   const token = await tokenFor(input.from);
 
   const res = await fetch(SEND_ENDPOINT, {
@@ -69,11 +84,15 @@ export async function sendMail(
       authorization: `Bearer ${token}`,
       "content-type": "application/json",
     },
-    body: JSON.stringify({ raw: await buildMime(input) }),
+    body: JSON.stringify({
+      raw: await buildMime(input),
+      ...(input.threadId ? { threadId: input.threadId } : {}),
+    }),
   });
 
   const json = (await res.json().catch(() => ({}))) as {
     id?: string;
+    threadId?: string;
     error?: { message?: string; status?: string };
   };
 
@@ -90,6 +109,7 @@ export async function sendMail(
   }
 
   // Gmail's own message id, not the RFC Message-ID header: it is what identifies
-  // the message inside the mailbox.
-  return { messageId: json.id ?? "" };
+  // the message inside the mailbox. threadId comes back on every send, including
+  // the first — that is how a conversation gets its id in the first place.
+  return { messageId: json.id ?? "", threadId: json.threadId ?? null };
 }

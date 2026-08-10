@@ -271,6 +271,53 @@ body {
   }
 }
 
+/* ---------------------------------------------------------- reply body -- */
+/*
+ * Minimal typography for HTML pulled out of someone else's mail client.
+ * Deliberately thin: the markup arrives already stripped of styles, images and
+ * scripts, and the goal is legibility inside a card, not fidelity to whatever
+ * Outlook produced.
+ */
+.prose-reply p {
+  margin: 0 0 0.6em;
+}
+
+.prose-reply p:last-child {
+  margin-bottom: 0;
+}
+
+.prose-reply a {
+  color: var(--color-accent);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
+.prose-reply ul,
+.prose-reply ol {
+  margin: 0 0 0.6em;
+  padding-left: 1.25em;
+  list-style: revert;
+}
+
+/* Quoted history. Muted and rule-marked so the new text reads first. */
+.prose-reply blockquote {
+  margin: 0.6em 0;
+  padding-left: 0.75em;
+  border-left: 2px solid var(--color-line);
+  color: var(--color-faint);
+}
+
+.prose-reply table {
+  display: block;
+  max-width: 100%;
+  overflow-x: auto;
+}
+
+.prose-reply pre {
+  overflow-x: auto;
+  white-space: pre-wrap;
+}
+
 /* ----------------------------------------------------- reduced motion -- */
 /*
  * Gentler, not absent. Opacity and colour still carry meaning about what

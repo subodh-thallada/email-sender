@@ -77,6 +77,17 @@ const ADDED_COLUMNS: [table: string, column: string, type: string][] = [
   ["sends", "open_count", "INTEGER NOT NULL DEFAULT 0"],
   ["sends", "first_opened_at", "TEXT"],
   ["sends", "last_opened_at", "TEXT"],
+  // Conversation wiring, for the dashboard and for follow-ups.
+  ["sends", "thread_id", "TEXT"],
+  ["sends", "gmail_thread_id", "TEXT"],
+  ["sends", "kind", "TEXT"],
+  ["outbox", "thread_id", "TEXT"],
+  ["outbox", "gmail_thread_id", "TEXT"],
+  ["outbox", "in_reply_to", "TEXT"],
+  // Not "references": that is a reserved word in Postgres and would need
+  // quoting at every single use site.
+  ["outbox", "refs", "TEXT"],
+  ["outbox", "kind", "TEXT"],
 ];
 
 /**
@@ -86,7 +97,80 @@ const ADDED_COLUMNS: [table: string, column: string, type: string][] = [
  */
 const ADDED_INDEXES: string[] = [
   "CREATE UNIQUE INDEX IF NOT EXISTS idx_sends_token ON sends(track_token)",
+  "CREATE INDEX IF NOT EXISTS idx_sends_thread ON sends(thread_id)",
 ];
+
+/**
+ * `sends.draft_id` was declared `NOT NULL REFERENCES drafts(id) ON DELETE
+ * CASCADE`, and neither half of that survives contact with how sends are
+ * actually written:
+ *
+ *   - The outbox flush and follow-ups both record sends that never had a draft
+ *     row. libsql enforces foreign keys, so those inserts fail *after* the mail
+ *     has left — the queue then counts a failed attempt and sends it again.
+ *   - The cascade meant deleting a search deleted its people, their drafts, and
+ *     with them the record of every email ever sent to them. Sent mail is
+ *     history; it must outlive the search that found the address.
+ *
+ * The column stays and still points at a draft whenever there is one. Only the
+ * constraint goes.
+ */
+const PG_FIXUPS: string[] = [
+  "ALTER TABLE sends DROP CONSTRAINT IF EXISTS sends_draft_id_fkey",
+  "ALTER TABLE sends ALTER COLUMN draft_id DROP NOT NULL",
+];
+
+/** Columns of `sends` after every migration, in declaration order. */
+const SENDS_COLUMNS = `id, draft_id, person_id, to_address, subject, message_id,
+  status, error, track_token, open_count, first_opened_at, last_opened_at,
+  sent_at, thread_id, gmail_thread_id, kind`;
+
+/**
+ * The SQLite half of the same correction.
+ *
+ * SQLite cannot drop a constraint, so the table is rebuilt. Two details matter:
+ * foreign keys are switched off around it, because `DROP TABLE sends` with them
+ * on fires the cascade into `email_opens` and would take every read receipt with
+ * it; and the guard makes the whole thing a no-op on the second run, so this
+ * costs one PRAGMA per boot once applied.
+ */
+async function relaxSendsDraftFk(client: Client): Promise<void> {
+  const fks = await client.execute("PRAGMA foreign_key_list(sends)");
+  const constrained = fks.rows.some((r) => String(r.from) === "draft_id");
+  if (!constrained) return;
+
+  await client.execute("PRAGMA foreign_keys = OFF");
+  try {
+    await client.executeMultiple(`
+      CREATE TABLE sends_rebuilt (
+        id              TEXT PRIMARY KEY,
+        draft_id        TEXT,
+        person_id       TEXT NOT NULL,
+        to_address      TEXT NOT NULL,
+        subject         TEXT NOT NULL,
+        message_id      TEXT,
+        status          TEXT NOT NULL,
+        error           TEXT,
+        track_token     TEXT,
+        open_count      INTEGER NOT NULL DEFAULT 0,
+        first_opened_at TEXT,
+        last_opened_at  TEXT,
+        sent_at         TEXT NOT NULL DEFAULT (datetime('now')),
+        thread_id       TEXT,
+        gmail_thread_id TEXT,
+        kind            TEXT
+      );
+      INSERT INTO sends_rebuilt (${SENDS_COLUMNS})
+        SELECT ${SENDS_COLUMNS} FROM sends;
+      DROP TABLE sends;
+      ALTER TABLE sends_rebuilt RENAME TO sends;
+      CREATE INDEX IF NOT EXISTS idx_sends_day ON sends(sent_at);
+      CREATE INDEX IF NOT EXISTS idx_sends_person ON sends(person_id);
+    `);
+  } finally {
+    await client.execute("PRAGMA foreign_keys = ON");
+  }
+}
 
 async function init(): Promise<Conn> {
   const target = url();
@@ -109,6 +193,7 @@ async function init(): Promise<Conn> {
       );
     }
     for (const stmt of ADDED_INDEXES) await sql.unsafe(stmt);
+    for (const stmt of PG_FIXUPS) await sql.unsafe(stmt);
     await sql.unsafe(
       "INSERT INTO profile (id) VALUES (1) ON CONFLICT DO NOTHING",
     );
@@ -137,6 +222,8 @@ async function init(): Promise<Conn> {
       // Already there.
     }
   }
+  // Before the indexes: the rebuild drops the table, taking its indexes with it.
+  await relaxSendsDraftFk(client);
   for (const stmt of ADDED_INDEXES) await client.execute(stmt);
   await client.execute("INSERT OR IGNORE INTO profile (id) VALUES (1)");
   return { kind: "sqlite", client };

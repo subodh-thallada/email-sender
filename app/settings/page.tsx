@@ -215,7 +215,13 @@ export default async function SettingsPage({
                   <p className="text-[11px] text-[var(--color-faint)]">
                     {i === 0 ? "Sends from this account" : "Connected"}
                     {a.name ? ` · ${a.name}` : ""}
+                    {a.canRead ? " · can read replies" : ""}
                   </p>
+                  {!a.canRead && (
+                    <p className="mt-0.5 text-[11px] text-amber-700">
+                      Send-only. Reconnect to let the Outreach page show replies.
+                    </p>
+                  )}
                 </div>
                 <form
                   action="/api/google/disconnect"
@@ -256,12 +262,26 @@ export default async function SettingsPage({
         </div>
 
         <p className={hint}>
-          Grants only <code>gmail.send</code> &mdash; this app can send as you and
-          cannot read your mailbox. Revoke it any time here or at{" "}
+          Asks for two permissions: <code>gmail.send</code> to send as you, and{" "}
+          <code>gmail.readonly</code> so the Outreach page can show replies. You
+          can untick the read one on Google&apos;s consent screen &mdash; sending,
+          scheduling and filing all still work, only the reply timeline goes
+          away. Nothing is ever deleted or modified in your mailbox, and you can
+          revoke either grant here or at{" "}
           <code>myaccount.google.com/permissions</code>. Scheduled mail is held in
           this app and released by the cron job; Gmail&apos;s own &ldquo;schedule
           send&rdquo; is a feature of the Gmail website and is not available
           through any API.
+        </p>
+        <p className={hint}>
+          <code>gmail.readonly</code> is a &ldquo;restricted&rdquo; scope in
+          Google&apos;s terms. Add it to your OAuth consent screen in Google Cloud
+          Console, then reconnect &mdash; an existing connection keeps the
+          permissions it was granted and will not pick this up on its own. An
+          unverified app still works: you get the &ldquo;Google hasn&apos;t
+          verified this app&rdquo; screen and a 100-user ceiling. Lifting that
+          ceiling is what needs a third-party security assessment, which is a
+          real cost for a restricted scope and not worth it for one mailbox.
         </p>
       </section>
 

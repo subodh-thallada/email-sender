@@ -4,6 +4,35 @@ Search for people in plain English, get their profile and email address, and dra
 
 Academic search is the strong path: it runs on [OpenAlex](https://openalex.org), which is free, needs no API key, and has real coverage of university researchers.
 
+## The Outreach dashboard
+
+Everything you have sent, at `/dashboard`. One row per conversation: who, the
+subject, whether they replied, whether the pixel fired, and what is still queued.
+Rows collapse to a line and open into the whole exchange.
+
+**Replies.** Pulled from Gmail on demand with *Check for replies*, which asks for
+the conversations it already knows about rather than reading your inbox at
+large. Needs the `gmail.readonly` grant; without it the rest of the page works
+unchanged and says so. Reply HTML is stripped of scripts, styles and images
+before it is ever stored — a remote image in a reply is a tracking pixel aimed
+back at you, and rendering it would report "read" to the sender.
+
+**Follow-ups.** Open a conversation and draft the next message from inside it.
+The model gets the thread, not a blank page, and switches prompt depending on
+whether they wrote back: a nudge is under 70 words and banned from "just
+following up", a reply answers what they actually said and accepts a no in one
+sentence without re-pitching. Send it now, at a time, or at the next peak slot.
+It goes out inside the original conversation — same Gmail thread,
+`In-Reply-To` and `References` set — so it threads in their client too, and the
+subject is forced to exactly one `Re:`. Follow-ups count against the same daily
+cap as first contact.
+
+**Folders and tags.** A conversation lives in one folder and carries any number
+of tags. Both are created inline, filter the list, and can be applied in bulk to
+a multi-selection. Deleting a folder or tag never deletes conversations. Archive
+takes finished threads out of the default view, and a compact toggle drops the
+preview line when the list gets long.
+
 ## Outreach features
 
 All configured under **Settings**.
@@ -85,18 +114,27 @@ Then generate the encryption key and connect from **Settings → Sending**:
 node -e "console.log(require('crypto').randomBytes(32).toString('base64'))"
 ```
 
-The only scope requested is `gmail.send` — this app can send as you and cannot
-read your mailbox. Revoke it from Settings or at
+Two scopes are requested: `gmail.send` to send as you, and `gmail.readonly` so
+the Outreach dashboard can show replies. Nothing is ever deleted or modified in
+your mailbox. You can untick the read one on Google's consent screen — sending,
+scheduling and filing all still work, only the reply timeline goes away. Revoke
+either from Settings or at
 [myaccount.google.com/permissions](https://myaccount.google.com/permissions).
+
+Add `gmail.readonly` to the consent screen's scope list before connecting. An
+account that is already connected keeps whatever it was granted and will not
+pick up the new scope on its own — Settings flags it as send-only with a
+reconnect prompt.
 
 **Set the publishing status to "In production", not "Testing".** While an OAuth
 consent screen sits in Testing, Google expires every refresh token after 7 days,
 so sending would silently break each week and need reconnecting. Publishing
 without verification is fine — you get the "Google hasn't verified this app"
 interstitial (Advanced → Go to … ) and a 100-user ceiling. `gmail.send` is a
-*sensitive* scope, so lifting that ceiling needs Google's app verification but
-not the third-party security assessment that *restricted* scopes like
-`gmail.readonly` require.
+*sensitive* scope and `gmail.readonly` is a *restricted* one; both work
+unverified under that ceiling. Lifting it needs Google's app verification, and
+for the restricted scope a third-party security assessment on top — a real
+expense, and pointless for a tool serving one mailbox. Stay under 100 users.
 
 Fill in your profile on **Settings** before drafting — the writer uses your background to make emails specific, and refuses to draft without it.
 
@@ -160,6 +198,7 @@ npx tsx scripts/check-deobfuscate.ts                        # 19 patterns + 3 li
 npx tsx --env-file=.env scripts/check-waterfall.ts    # scrape → learn → infer → verify
 npx tsx --env-file=.env scripts/check-db.ts           # schema + profile round-trip
 npx tsx scripts/check-sema.ts                               # peak times, pixel, draft parsing, depth
+npx tsx scripts/check-threads.ts                            # dashboard store, threading, follow-up prompts
 ```
 
 ## Deploying to Vercel

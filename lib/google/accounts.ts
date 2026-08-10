@@ -3,6 +3,7 @@ import { decrypt, encrypt, encryptionConfigured } from "../crypto";
 import {
   accessToken,
   forgetAccessToken,
+  grantsRead,
   oauthConfigured,
   revoke,
   type GrantedAccount,
@@ -31,6 +32,9 @@ export interface ConnectedAccount {
   name: string | null;
   picture: string | null;
   connectedAt: string;
+  /** Granted gmail.readonly, so replies can be pulled in. Accounts connected
+   *  before that scope existed read false until they reconnect. */
+  canRead: boolean;
 }
 
 function publicView(row: AccountRow): ConnectedAccount {
@@ -39,6 +43,7 @@ function publicView(row: AccountRow): ConnectedAccount {
     name: row.name,
     picture: row.picture,
     connectedAt: row.connected_at,
+    canRead: grantsRead(row.scope),
   };
 }
 
@@ -102,6 +107,20 @@ export async function defaultAccount(): Promise<ConnectedAccount | null> {
     "SELECT * FROM google_accounts ORDER BY connected_at LIMIT 1",
   );
   return row ? publicView(row) : null;
+}
+
+/**
+ * The account replies are pulled from: the default one if it granted read
+ * access, otherwise the first that did. Null means nobody has granted it, which
+ * every caller has to handle — the dashboard still works, it just cannot show
+ * replies.
+ */
+export async function readableAccount(): Promise<ConnectedAccount | null> {
+  const rows = await all<AccountRow>(
+    "SELECT * FROM google_accounts ORDER BY connected_at",
+  );
+  const found = rows.find((r) => grantsRead(r.scope));
+  return found ? publicView(found) : null;
 }
 
 export async function disconnect(email: string): Promise<void> {

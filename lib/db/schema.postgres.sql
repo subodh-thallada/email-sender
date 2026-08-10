@@ -80,7 +80,11 @@ CREATE INDEX IF NOT EXISTS idx_drafts_person ON drafts(person_id);
 
 CREATE TABLE IF NOT EXISTS sends (
   id          TEXT PRIMARY KEY,
-  draft_id    TEXT NOT NULL REFERENCES drafts(id) ON DELETE CASCADE,
+  -- Nullable and unconstrained: a scheduled send or a follow-up may have no
+  -- draft row at all, and sent mail must outlive the search that found the
+  -- address rather than cascading away with it. PG_FIXUPS in lib/db/index.ts
+  -- retrofits this onto databases that predate it.
+  draft_id    TEXT,
   person_id   TEXT NOT NULL,
   to_address  TEXT NOT NULL,
   subject     TEXT NOT NULL,
@@ -162,6 +166,69 @@ CREATE TABLE IF NOT EXISTS google_accounts (
   connected_at  TEXT NOT NULL DEFAULT (to_char(now() AT TIME ZONE 'utc', 'YYYY-MM-DD HH24:MI:SS')),
   updated_at    TEXT NOT NULL DEFAULT (to_char(now() AT TIME ZONE 'utc', 'YYYY-MM-DD HH24:MI:SS'))
 );
+
+-- One conversation: the first send, every follow-up, and every reply.
+-- Categorisation hangs off here rather than off `sends` so a thread keeps its
+-- folder and tags when a follow-up is added to it.
+CREATE TABLE IF NOT EXISTS threads (
+  id              TEXT PRIMARY KEY,
+  gmail_thread_id TEXT,                  -- Gmail's own id; null until a send succeeds
+  person_id       TEXT,
+  contact_name    TEXT,
+  contact_email   TEXT NOT NULL,
+  subject         TEXT NOT NULL DEFAULT '',
+  folder_id       TEXT,                  -- labels.id where kind='folder'; null = Unfiled
+  archived        INTEGER NOT NULL DEFAULT 0,
+  reply_count     INTEGER NOT NULL DEFAULT 0,
+  last_sent_at    TEXT,
+  last_reply_at   TEXT,
+  synced_at       TEXT,
+  created_at      TEXT NOT NULL DEFAULT (to_char(now() AT TIME ZONE 'utc', 'YYYY-MM-DD HH24:MI:SS'))
+);
+-- Nullable and unique: both engines allow many NULLs under a unique index, so
+-- threads awaiting their first successful send do not collide with each other.
+CREATE UNIQUE INDEX IF NOT EXISTS idx_threads_gmail ON threads(gmail_thread_id);
+CREATE INDEX IF NOT EXISTS idx_threads_sorted ON threads(archived, last_sent_at);
+
+-- Every message in a thread, ours and theirs. Ours are written at send time, so
+-- the timeline reads correctly even before a Gmail sync has ever run.
+CREATE TABLE IF NOT EXISTS thread_messages (
+  id             TEXT PRIMARY KEY,
+  thread_id      TEXT NOT NULL REFERENCES threads(id) ON DELETE CASCADE,
+  gmail_id       TEXT,
+  direction      TEXT NOT NULL,          -- outgoing | incoming
+  from_address   TEXT NOT NULL DEFAULT '',
+  from_name      TEXT,
+  to_address     TEXT NOT NULL DEFAULT '',
+  subject        TEXT NOT NULL DEFAULT '',
+  snippet        TEXT NOT NULL DEFAULT '',
+  body_text      TEXT NOT NULL DEFAULT '',
+  body_html      TEXT,
+  rfc_message_id TEXT,                   -- RFC-2822 Message-ID: what a reply must cite
+  sent_at        TEXT NOT NULL,
+  created_at     TEXT NOT NULL DEFAULT (to_char(now() AT TIME ZONE 'utc', 'YYYY-MM-DD HH24:MI:SS'))
+);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_msgs_gmail ON thread_messages(gmail_id);
+CREATE INDEX IF NOT EXISTS idx_msgs_thread ON thread_messages(thread_id, sent_at);
+
+-- Folders and tags share one table. A folder is exclusive (threads.folder_id);
+-- a tag is many-to-many (thread_tags). Same shape, one editor, one route.
+CREATE TABLE IF NOT EXISTS labels (
+  id         TEXT PRIMARY KEY,
+  kind       TEXT NOT NULL,              -- folder | tag
+  name       TEXT NOT NULL,
+  color      TEXT NOT NULL DEFAULT 'slate',
+  position   INTEGER NOT NULL DEFAULT 0,
+  created_at TEXT NOT NULL DEFAULT (to_char(now() AT TIME ZONE 'utc', 'YYYY-MM-DD HH24:MI:SS'))
+);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_labels_name ON labels(kind, name);
+
+CREATE TABLE IF NOT EXISTS thread_tags (
+  thread_id TEXT NOT NULL REFERENCES threads(id) ON DELETE CASCADE,
+  label_id  TEXT NOT NULL REFERENCES labels(id) ON DELETE CASCADE,
+  PRIMARY KEY (thread_id, label_id)
+);
+CREATE INDEX IF NOT EXISTS idx_thread_tags_label ON thread_tags(label_id);
 
 -- Queued / scheduled sends. A row here is a promise to send later.
 CREATE TABLE IF NOT EXISTS outbox (
