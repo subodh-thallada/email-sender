@@ -2,6 +2,9 @@ import Link from "next/link";
 import { notFound } from "next/navigation";
 import { all, one } from "@/lib/db";
 import { getSettings } from "@/lib/settings";
+import { getProfile } from "@/lib/profile";
+import { listTemplates } from "@/lib/templates";
+import { senderVars } from "@/lib/template-fill";
 import { openStatsFor } from "@/lib/send/tracking";
 import ResultsList from "./results-list";
 import type { OpenInfo } from "../../person-card";
@@ -115,6 +118,8 @@ export default async function ResultsPage({
   );
 
   const { bulkDraftLimit } = await getSettings();
+  const templates = await listTemplates();
+  const sender = senderVars(await getProfile());
 
   return (
     <div className="space-y-6">
@@ -150,6 +155,8 @@ export default async function ResultsPage({
         drafts={drafts}
         opens={opens}
         bulkLimit={bulkDraftLimit}
+        templates={templates}
+        sender={sender}
       />
     </div>
   );

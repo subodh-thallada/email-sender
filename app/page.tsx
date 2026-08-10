@@ -1,5 +1,8 @@
 import Link from "next/link";
 import { all } from "@/lib/db";
+import { getProfile } from "@/lib/profile";
+import { listTemplates } from "@/lib/templates";
+import { senderVars } from "@/lib/template-fill";
 import SearchBox from "./search-box";
 
 export const dynamic = "force-dynamic";
@@ -18,6 +21,8 @@ export default async function HomePage() {
             (SELECT COUNT(*) FROM people p WHERE p.search_id = s.id) AS people
      FROM searches s ORDER BY s.created_at DESC LIMIT 8`,
   );
+  const templates = await listTemplates();
+  const sender = senderVars(await getProfile());
 
   return (
     <div className="space-y-9">
@@ -31,7 +36,7 @@ export default async function HomePage() {
         </p>
       </div>
 
-      <SearchBox />
+      <SearchBox templates={templates} sender={sender} />
 
       {recent.length > 0 && (
         <section>

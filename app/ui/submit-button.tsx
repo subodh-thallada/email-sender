@@ -2,7 +2,7 @@
 
 import { useEffect, useRef, useState } from "react";
 import { useFormStatus } from "react-dom";
-import { Spinner, Swap } from "../ui/bits";
+import { Spinner, Swap } from "./bits";
 
 export default function SubmitButton({ label = "Save profile" }: { label?: string }) {
   const { pending } = useFormStatus();

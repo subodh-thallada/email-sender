@@ -133,6 +133,19 @@ CREATE TABLE IF NOT EXISTS app_settings (
   updated_at  TEXT NOT NULL DEFAULT (datetime('now'))
 );
 
+-- Reusable email templates, picked from a dropdown while drafting. The text
+-- carries {{placeholders}} (see lib/template-fill.ts) which are filled in for
+-- whoever the card is about.
+CREATE TABLE IF NOT EXISTS templates (
+  id          TEXT PRIMARY KEY,
+  name        TEXT NOT NULL,
+  subject     TEXT NOT NULL DEFAULT '',
+  body        TEXT NOT NULL DEFAULT '',
+  notes       TEXT NOT NULL DEFAULT '',      -- extra guidance for the writer model
+  created_at  TEXT NOT NULL DEFAULT (datetime('now')),
+  updated_at  TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
 -- Google accounts that have granted gmail.send, keyed by the address mail is
 -- sent from. refresh_token is AES-256-GCM ciphertext, never plaintext: a leaked
 -- backup would otherwise let the reader send mail as the user indefinitely.

@@ -2,6 +2,12 @@
 
 import { useEffect, useState } from "react";
 import type { EmailConfidence, PersonPayload } from "@/lib/types";
+import {
+  fillFor,
+  templateVars,
+  type TemplateSender,
+  type TemplateSummary,
+} from "@/lib/template-fill";
 import Tooltip from "./ui/tooltip";
 import { CopyButton, Spinner, Swap } from "./ui/bits";
 
@@ -40,6 +46,14 @@ export interface OpenInfo {
   firstAt: string | null;
 }
 
+/** Nothing to substitute when the profile is empty; the draft just says less. */
+const NO_SENDER: TemplateSender = {
+  my_name: "",
+  my_headline: "",
+  my_goal: "",
+  signature: "",
+};
+
 export default function PersonCard({
   person,
   index = 0,
@@ -48,6 +62,8 @@ export default function PersonCard({
   opens = null,
   selected,
   onSelect,
+  templates = [],
+  sender = NO_SENDER,
 }: {
   person: PersonPayload;
   /** Drives the entry stagger on server-rendered lists. */
@@ -61,6 +77,10 @@ export default function PersonCard({
   /** Selection is owned by the list so the bulk bar can count it. */
   selected?: boolean;
   onSelect?: (personId: string, checked: boolean) => void;
+  /** Saved templates, offered in the dropdown. Empty hides it entirely. */
+  templates?: TemplateSummary[];
+  /** The sender half of the placeholders, read from the profile server-side. */
+  sender?: TemplateSender;
 }) {
   const [open, setOpen] = useState(Boolean(initialDraft));
   const [drafting, setDrafting] = useState(false);
@@ -73,6 +93,9 @@ export default function PersonCard({
   const [mode, setMode] = useState<"now" | "at" | "peak">("now");
   const [instruction, setInstruction] = useState("");
   const [revising, setRevising] = useState(false);
+  const [templateId, setTemplateId] = useState("");
+  // Set when picking a template would overwrite text that is already there.
+  const [pendingTemplateId, setPendingTemplateId] = useState<string | null>(null);
   const [history, setHistory] = useState<
     { role: "user" | "assistant"; content: string }[]
   >([]);
@@ -95,6 +118,37 @@ export default function PersonCard({
   const dossier = person.dossier;
   const needsConfirm = best?.confidence === "inferred" || best?.confidence === "unknown";
 
+  /** Drops a saved template into the editor with its placeholders resolved. */
+  function applyTemplate(id: string) {
+    const t = templates.find((x) => x.id === id);
+    if (!t) return;
+    const { subject: s, body: b } = fillFor(
+      t,
+      templateVars({ ...person, email: best?.address ?? "" }, sender),
+    );
+    setSubject(s);
+    setBody(b);
+    setOpen(true);
+    setSend({ status: "idle" });
+    setHistory([]);
+  }
+
+  /**
+   * Picking a template replaces what is in the editor, which is the point —
+   * but silently discarding a draft someone spent a model call and an edit on
+   * is not. Only a non-empty body earns the extra step.
+   */
+  function chooseTemplate(id: string) {
+    setTemplateId(id);
+    setPendingTemplateId(null);
+    if (!id) return; // Back to no template: the text stays, the steering stops.
+    if (body.trim()) {
+      setPendingTemplateId(id);
+      return;
+    }
+    applyTemplate(id);
+  }
+
   async function draft() {
     setDrafting(true);
     setOpen(true);
@@ -105,7 +159,12 @@ export default function PersonCard({
       const res = await fetch("/api/draft", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ personId: person.id }),
+        // With a template selected the writer follows its shape instead of
+        // inventing one, and still writes the specifics for this person.
+        body: JSON.stringify({
+          personId: person.id,
+          templateId: templateId || undefined,
+        }),
       });
       if (!res.ok || !res.body) throw new Error(await res.text());
 
@@ -343,21 +402,67 @@ export default function PersonCard({
           )}
         </div>
 
-        <button
-          onClick={() => void draft()}
-          disabled={drafting}
-          className="pressable shrink-0 rounded-md border border-[var(--color-line)] bg-[var(--color-surface)] px-3 py-1.5 text-xs font-medium hover:border-[var(--color-accent)] hover:text-[var(--color-accent)] disabled:opacity-50"
-        >
-          <span className="flex items-center gap-1.5">
-            {drafting && <Spinner />}
-            <Swap
-              showing={drafting ? "b" : "a"}
-              a={open ? "Redraft" : "Draft email"}
-              b="Writing"
-            />
-          </span>
-        </button>
+        <div className="flex shrink-0 flex-col items-end gap-2">
+          {templates.length > 0 && (
+            <select
+              aria-label={`Template for ${person.name}`}
+              value={templateId}
+              onChange={(e) => chooseTemplate(e.target.value)}
+              className="field max-w-[9.5rem] rounded-md border border-[var(--color-line)] px-2 py-1 text-[11px]"
+            >
+              <option value="">No template</option>
+              {templates.map((t) => (
+                <option key={t.id} value={t.id}>
+                  {t.name}
+                </option>
+              ))}
+            </select>
+          )}
+
+          <button
+            onClick={() => void draft()}
+            disabled={drafting}
+            className="pressable rounded-md border border-[var(--color-line)] bg-[var(--color-surface)] px-3 py-1.5 text-xs font-medium hover:border-[var(--color-accent)] hover:text-[var(--color-accent)] disabled:opacity-50"
+          >
+            <span className="flex items-center gap-1.5">
+              {drafting && <Spinner />}
+              <Swap
+                showing={drafting ? "b" : "a"}
+                a={open ? "Redraft" : "Draft email"}
+                b="Writing"
+              />
+            </span>
+          </button>
+        </div>
       </div>
+
+      {pendingTemplateId && (
+        <div className="flex flex-wrap items-center gap-2 border-t border-[var(--color-line)] bg-[var(--color-paper)] px-4 py-2 text-[11px]">
+          <span className="text-amber-800">
+            Replace the draft below with this template?
+          </span>
+          <button
+            type="button"
+            onClick={() => {
+              applyTemplate(pendingTemplateId);
+              setPendingTemplateId(null);
+            }}
+            className="pressable rounded-md bg-amber-700 px-2 py-1 font-medium text-white"
+          >
+            Replace
+          </button>
+          <button
+            type="button"
+            onClick={() => setPendingTemplateId(null)}
+            className="pressable pressable-subtle rounded px-1.5 py-1 text-[var(--color-muted)] hover:text-[var(--color-ink)]"
+          >
+            Keep what I have
+          </button>
+          <span className="basis-full text-[10px] text-[var(--color-faint)]">
+            Either way the template stays selected, so Redraft will follow it.
+          </span>
+        </div>
+      )}
 
       {/* Always mounted so the collapse can animate both directions. */}
       <div className="collapsible" data-open={open}>

@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 import { Spinner, Swap } from "../ui/bits";
-import SubmitButton from "./submit-button";
+import SubmitButton from "../ui/submit-button";
 import type { Profile, ProfileDraft } from "@/lib/types";
 
 const field =

@@ -6,7 +6,7 @@ import type { Provider, Task } from "@/lib/ai/models";
 // import from settings.ts would bundle the database driver for the browser.
 import { DEPTHS, DEPTH_LABEL } from "@/lib/depth";
 import type { Settings } from "@/lib/settings";
-import SubmitButton from "./submit-button";
+import SubmitButton from "../ui/submit-button";
 
 const TASK_LABEL: Record<Task, string> = {
   parse: "Understand query",

@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import Link from "next/link";
+import type { TemplateSender, TemplateSummary } from "@/lib/template-fill";
 import type { PersonPayload, SearchEvent } from "@/lib/types";
 import PersonCard from "./person-card";
 import { Spinner, Swap } from "./ui/bits";
@@ -12,7 +13,15 @@ const EXAMPLES = [
   "computational biology PIs at UBC",
 ];
 
-export default function SearchBox() {
+export default function SearchBox({
+  templates = [],
+  sender,
+}: {
+  /** Saved templates, so a card found live offers the same dropdown as one
+   *  rendered from the results page. */
+  templates?: TemplateSummary[];
+  sender?: TemplateSender;
+}) {
   const [query, setQuery] = useState("");
   const [running, setRunning] = useState(false);
   const [status, setStatus] = useState<string | null>(null);
@@ -192,7 +201,12 @@ export default function SearchBox() {
           {/* No stagger here: results arrive over the wire seconds apart, so
               the network already provides the cascade. */}
           {people.map((p) => (
-            <PersonCard key={p.id} person={p} />
+            <PersonCard
+              key={p.id}
+              person={p}
+              templates={templates}
+              sender={sender}
+            />
           ))}
         </section>
       )}

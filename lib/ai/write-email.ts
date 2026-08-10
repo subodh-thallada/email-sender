@@ -50,14 +50,43 @@ export function isBusinessSender(profile: Profile): boolean {
   return profile.offer.trim().length > 15 && profile.audience.trim().length > 5;
 }
 
-export function systemFor(profile: Profile): string {
-  return withInstructions(isBusinessSender(profile) ? BUSINESS : ACADEMIC, profile);
+/**
+ * Added when the sender picked a template. It sits between the house style and
+ * the user's own instructions: a saved template is a decision already made
+ * about shape and length, so the word counts above stop applying — but it is
+ * still not a licence to keep a sentence that is not true of this recipient.
+ */
+const TEMPLATE_RULE = `The sender has chosen a template, given below. Follow it:
+- Keep its structure, its order, its length and its voice. Reuse its wording wherever the wording still fits.
+- Its placeholders are already filled in for this recipient. Leave those values alone.
+- Replace only what is generic or bracketed with something true about THIS recipient, drawn from the details you were given. If you have nothing specific, cut the sentence rather than padding it.
+- Do not add sections, sign-offs or paragraphs the template does not have.
+- Its length overrides the word count above.`;
+
+/** A saved template, placeholders already resolved for this recipient. */
+export interface DraftTemplate {
+  name: string;
+  subject: string;
+  body: string;
+  notes: string;
+}
+
+export function systemFor(
+  profile: Profile,
+  template: DraftTemplate | null = null,
+): string {
+  const base = isBusinessSender(profile) ? BUSINESS : ACADEMIC;
+  return withInstructions(
+    template ? `${base}\n\n${TEMPLATE_RULE}` : base,
+    profile,
+  );
 }
 
 export function buildPrompt(
   profile: Profile,
   person: { name: string; title: string | null; org: string | null },
   dossier: Dossier | null,
+  template: DraftTemplate | null = null,
 ): string {
   const theirWork = dossier
     ? [
@@ -102,6 +131,20 @@ export function buildPrompt(
       : "",
     `Tone: ${profile.tone}`,
     profile.signature ? `Signature:\n${profile.signature}` : "",
+    // Last, so it is the freshest thing in the model's context when it starts
+    // writing — this is the shape the output has to come out in.
+    template
+      ? [
+          "",
+          `TEMPLATE — "${template.name}"`,
+          template.subject ? `Subject: ${template.subject}` : "",
+          "Body:",
+          template.body,
+          template.notes ? `\nSender's notes on this template:\n${template.notes}` : "",
+        ]
+          .filter(Boolean)
+          .join("\n")
+      : "",
   ]
     .filter(Boolean)
     .join("\n");
@@ -112,11 +155,12 @@ export function streamEmail(
   profile: Profile,
   person: { name: string; title: string | null; org: string | null },
   dossier: Dossier | null,
+  template: DraftTemplate | null = null,
 ): ReadableStream<Uint8Array> {
   return streamText({
     task: "write",
-    system: systemFor(profile),
-    user: buildPrompt(profile, person, dossier),
+    system: systemFor(profile, template),
+    user: buildPrompt(profile, person, dossier, template),
     maxTokens: 16000,
   });
 }
@@ -150,11 +194,12 @@ export async function writeEmail(
   profile: Profile,
   person: { name: string; title: string | null; org: string | null },
   dossier: Dossier | null,
+  template: DraftTemplate | null = null,
 ): Promise<WrittenEmail> {
   const raw = await generateText({
     task: "write",
-    system: systemFor(profile),
-    user: buildPrompt(profile, person, dossier),
+    system: systemFor(profile, template),
+    user: buildPrompt(profile, person, dossier, template),
     maxTokens: 16000,
   });
 

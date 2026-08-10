@@ -3,6 +3,7 @@
 import { useMemo, useState } from "react";
 import PersonCard, { type OpenInfo, type PushedDraft } from "../../person-card";
 import { Spinner, Swap } from "../../ui/bits";
+import type { TemplateSender, TemplateSummary } from "@/lib/template-fill";
 import type { PersonPayload } from "@/lib/types";
 
 interface BulkResult {
@@ -22,11 +23,15 @@ export default function ResultsList({
   drafts,
   opens,
   bulkLimit,
+  templates,
+  sender,
 }: {
   people: PersonPayload[];
   drafts: Record<string, { subject: string; body: string }>;
   opens: Record<string, OpenInfo>;
   bulkLimit: number;
+  templates: TemplateSummary[];
+  sender: TemplateSender;
 }) {
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [running, setRunning] = useState(false);
@@ -158,6 +163,8 @@ export default function ResultsList({
           opens={opens[p.id] ?? null}
           selected={selected.has(p.id)}
           onSelect={toggle}
+          templates={templates}
+          sender={sender}
         />
       ))}
     </div>
