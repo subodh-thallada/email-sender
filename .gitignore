@@ -10,3 +10,10 @@ next-env.d.ts
 
 # build artifacts
 tsconfig.tsbuildinfo
+.vercel
+
+# Every env file, whatever the suffix — .env.production and friends carry the
+# same keys. The example is the one that must stay in the repo: it is the only
+# record of which variables a fresh checkout has to set.
+.env*
+!.env.example
