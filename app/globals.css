@@ -247,6 +247,26 @@ body {
   transition-duration: 0ms;
 }
 
+/* ---------------------------------------------------------------- menu -- */
+/* Same grammar as .tooltip, scaled from its own corner so it reads as coming
+   out of the trigger rather than appearing beside it. */
+
+.menu {
+  transition:
+    opacity var(--dur-fast) var(--ease-out),
+    transform var(--dur-fast) var(--ease-out);
+}
+
+.menu[data-open="false"] {
+  opacity: 0;
+  transform: scale(0.96) translateY(-2px);
+}
+
+.menu[data-open="true"] {
+  opacity: 1;
+  transform: scale(1) translateY(0);
+}
+
 /* --------------------------------------------------------------- input -- */
 
 .field {

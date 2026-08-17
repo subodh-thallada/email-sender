@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 import Link from "next/link";
 import NavLink from "./ui/nav-link";
+import AccountMenu from "./ui/account-menu";
 import { currentUser } from "@/lib/auth";
 import "./globals.css";
 
@@ -26,21 +27,23 @@ export default async function RootLayout({
             >
               Email&nbsp;Agent
             </Link>
-            <nav className="-mr-2 flex items-center gap-1">
+            {/* No negative right margin: the trailing item is now a bordered
+                circle whose edge is real, and it lines up with the gutter. */}
+            <nav className="flex items-center gap-1">
               <NavLink href="/">Search</NavLink>
               <NavLink href="/dashboard">Outreach</NavLink>
               <NavLink href="/templates">Templates</NavLink>
               <NavLink href="/settings">Settings</NavLink>
               {user && (
-                <form action="/auth/signout" method="post" className="contents">
-                  <button
-                    type="submit"
-                    title={user.email}
-                    className="pressable pressable-subtle rounded-md px-2 py-1 text-[13px] text-[var(--color-muted)] hover:text-[var(--color-ink)]"
-                  >
-                    Sign out
-                  </button>
-                </form>
+                <>
+                  {/* Separator, so the avatar reads as a different kind of
+                      control rather than the last item in the nav run. */}
+                  <span
+                    aria-hidden
+                    className="mx-1.5 h-4 w-px bg-[var(--color-line)]"
+                  />
+                  <AccountMenu email={user.email ?? ""} />
+                </>
               )}
             </nav>
           </div>
