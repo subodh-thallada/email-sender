@@ -114,10 +114,30 @@ const ADDED_INDEXES: string[] = [
  *
  * The column stays and still points at a draft whenever there is one. Only the
  * constraint goes.
+ *
+ * `cache.fetched_at` / `cache.ttl_ms` hold epoch ms and a TTL of up to 30 days.
+ * Both blow past int4's 2,147,483,647 — Postgres rejected every cache write with
+ * `value "17869..." is out of range for type integer`, which meant every search
+ * failed. Only SQLite let it pass, its INTEGER being 64-bit. Widening int4 to
+ * int8 rewrites the table under an ACCESS EXCLUSIVE lock, so it is guarded and
+ * runs at most once rather than on every boot.
  */
 const PG_FIXUPS: string[] = [
   "ALTER TABLE sends DROP CONSTRAINT IF EXISTS sends_draft_id_fkey",
   "ALTER TABLE sends ALTER COLUMN draft_id DROP NOT NULL",
+  `DO $$
+   DECLARE c text;
+   BEGIN
+     FOREACH c IN ARRAY ARRAY['fetched_at', 'ttl_ms'] LOOP
+       IF EXISTS (
+         SELECT 1 FROM information_schema.columns
+          WHERE table_schema = 'public' AND table_name = 'cache'
+            AND column_name = c AND data_type = 'integer'
+       ) THEN
+         EXECUTE format('ALTER TABLE cache ALTER COLUMN %I TYPE BIGINT', c);
+       END IF;
+     END LOOP;
+   END $$`,
 ];
 
 /** Columns of `sends` after every migration, in declaration order. */
@@ -172,6 +192,66 @@ async function relaxSendsDraftFk(client: Client): Promise<void> {
   }
 }
 
+/**
+ * Shuts PostgREST out of the app's tables.
+ *
+ * On Supabase every table in `public` is served over HTTP at
+ * `<project>.supabase.co/rest/v1/<table>`, and the anon key that authorises
+ * those calls is `NEXT_PUBLIC_*` — shipped to every browser that loads the
+ * login page. Supabase's default grants hand `anon` and `authenticated` full
+ * CRUD on each table, so without this the encrypted Google refresh tokens in
+ * `google_accounts`, every address ever mailed, and the whole outbox are
+ * readable and writable by anyone who views source.
+ *
+ * Enabling RLS with no policies denies both roles outright, and the grants go
+ * too so a policy added later cannot re-open a table by accident. The app is
+ * unaffected: it connects over the pooler as `postgres`, which owns these
+ * tables and carries BYPASSRLS.
+ *
+ * Idempotent, and skipped table by table once applied so a normal boot takes no
+ * ACCESS EXCLUSIVE locks. Non-Supabase Postgres has no `anon` role; the grant
+ * half is then a no-op and RLS alone is harmless.
+ */
+async function lockDownPublicTables(sql: postgres.Sql): Promise<void> {
+  await sql.unsafe(`
+    DO $$
+    DECLARE
+      t          record;
+      roles      text;
+    BEGIN
+      SELECT string_agg(quote_ident(rolname), ', ')
+        INTO roles
+        FROM pg_roles
+       WHERE rolname IN ('anon', 'authenticated');
+
+      FOR t IN
+        SELECT c.relname, c.relrowsecurity
+          FROM pg_class c
+          JOIN pg_namespace n ON n.oid = c.relnamespace
+         WHERE n.nspname = 'public' AND c.relkind = 'r'
+      LOOP
+        IF NOT t.relrowsecurity THEN
+          EXECUTE format(
+            'ALTER TABLE public.%I ENABLE ROW LEVEL SECURITY', t.relname);
+        END IF;
+        IF roles IS NOT NULL THEN
+          EXECUTE format(
+            'REVOKE ALL ON public.%I FROM %s', t.relname, roles);
+        END IF;
+      END LOOP;
+
+      -- Tables created after this runs inherit Supabase's default grants, so
+      -- withdraw them at the source as well. Only covers tables this role
+      -- creates, which is every table the app makes.
+      IF roles IS NOT NULL THEN
+        EXECUTE format(
+          'ALTER DEFAULT PRIVILEGES IN SCHEMA public REVOKE ALL ON TABLES FROM %s',
+          roles);
+      END IF;
+    END $$;
+  `);
+}
+
 async function init(): Promise<Conn> {
   const target = url();
 
@@ -194,6 +274,7 @@ async function init(): Promise<Conn> {
     }
     for (const stmt of ADDED_INDEXES) await sql.unsafe(stmt);
     for (const stmt of PG_FIXUPS) await sql.unsafe(stmt);
+    await lockDownPublicTables(sql);
     await sql.unsafe(
       "INSERT INTO profile (id) VALUES (1) ON CONFLICT DO NOTHING",
     );

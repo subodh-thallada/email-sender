@@ -122,8 +122,11 @@ CREATE INDEX IF NOT EXISTS idx_opens_send ON email_opens(send_id, opened_at);
 CREATE TABLE IF NOT EXISTS cache (
   key         TEXT PRIMARY KEY,
   value       TEXT NOT NULL,                 -- JSON
-  fetched_at  INTEGER NOT NULL,              -- epoch ms
-  ttl_ms      INTEGER NOT NULL
+  -- BIGINT, not INTEGER: Postgres INTEGER is int4 and epoch ms passed the
+  -- 2^31 ceiling in 1970. SQLite's INTEGER is 64-bit, which is why the sibling
+  -- schema can say INTEGER and still work.
+  fetched_at  BIGINT NOT NULL,               -- epoch ms
+  ttl_ms      BIGINT NOT NULL
 );
 
 -- Learned per-domain email format, e.g. utoronto.ca -> "{first}.{last}".
